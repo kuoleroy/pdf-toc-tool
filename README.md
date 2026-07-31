@@ -82,15 +82,8 @@ txt 中的页码通常是"印刷页码"，而 PDF 文件（扫描件）开头还
 ```text
 pdf-toc-tool/
 ├── pdf_toc_tool.py        # 主程序（GUI + CLI）
-├── scripts/               # 历史构建脚本（针对《列宁选集》的定制流程）
-│   ├── build_toc.py       # 第1卷（OCR 识别目录 + 结构规整）
-│   ├── build_toc2.py      # 第2卷（人工录入 txt + 结构规则 + 错字修正表）
-│   ├── build_toc34.py     # 第3/4卷（点线+页码范围格式解析）
-│   ├── parse_toc.py       # 目录页 OCR 解析
-│   └── verify_map.py      # 页码映射验证
+└── (其他构建相关文件：BUILD.md / LICENSE / requirements.txt 等)
 ```
-
-`scripts/` 中的脚本含绝对路径，仅作为定制流程参考，不保证开箱即用。
 
 ## 开源许可
 
