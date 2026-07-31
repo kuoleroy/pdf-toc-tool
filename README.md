@@ -3,7 +3,7 @@
 为扫描版 PDF 批量提取 / 写入书签（目录）的轻量工具。单文件 Python 实现（GUI + CLI），
 基于 [PyMuPDF](https://pymupdf.readthedocs.io/)，无其他依赖。
 
-最初用于给《列宁选集》(1972年版, 4卷, 扫描版) 添加目录书签。
+最初用于给《列宁选集》(1972年版 扫描版) 添加目录书签。
 
 ## 功能
 
@@ -44,6 +44,8 @@ pip install pyinstaller
 pyinstaller --onefile --windowed --name PDFTocTool pdf_toc_tool.py   # GUI 版
 pyinstaller --onefile --console   --name PDFTocToolCLI pdf_toc_tool.py # CLI 版
 ```
+
+详细步骤（含 Python 安装、常见问题、GitHub Actions 自动打包）见 [BUILD.md](BUILD.md)。
 
 ## 目录 txt 格式
 
