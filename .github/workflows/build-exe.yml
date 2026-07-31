@@ -25,11 +25,14 @@ jobs:
           pip install pyinstaller
           pip install -r requirements.txt
 
-      - name: Build GUI EXE
-        run: pyinstaller --onefile --windowed --name PDFTocTool pdf_toc_tool.py
+      - name: Build plain EXE (no OCR)
+        # --noupx: GitHub runner 预装 UPX，PyInstaller 自动使用后产物损坏不可运行，必须禁用
+        run: pyinstaller --onefile --windowed --noupx --exclude-module rapidocr_onnxruntime --name PDFTocTool pdf_toc_tool.py
 
-      - name: Build CLI EXE
-        run: pyinstaller --onefile --console --name PDFTocToolCLI pdf_toc_tool.py
+      - name: Build OCR EXE
+        run: |
+          pip install -r requirements-ocr.txt
+          pyinstaller --onefile --windowed --noupx --collect-all rapidocr_onnxruntime --collect-all onnxruntime --name PDFTocToolOCR pdf_toc_tool.py
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -37,7 +40,7 @@ jobs:
           name: PDFTocTool-windows
           path: |
             dist/PDFTocTool.exe
-            dist/PDFTocToolCLI.exe
+            dist/PDFTocToolOCR.exe
 
       - name: Create GitHub Release (tag only)
         if: startsWith(github.ref, 'refs/tags/')
@@ -45,4 +48,4 @@ jobs:
         with:
           files: |
             dist/PDFTocTool.exe
-            dist/PDFTocToolCLI.exe
+            dist/PDFTocToolOCR.exe
