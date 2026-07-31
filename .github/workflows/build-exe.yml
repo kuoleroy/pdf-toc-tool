@@ -1,0 +1,45 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+
+      - name: Build GUI EXE
+        run: pyinstaller --onefile --windowed --name PDFTocTool pdf_toc_tool.py
+
+      - name: Build CLI EXE
+        run: pyinstaller --onefile --console --name PDFTocToolCLI pdf_toc_tool.py
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFTocTool-windows
+          path: |
+            dist/PDFTocTool.exe
+            dist/PDFTocToolCLI.exe
+
+      - name: Create GitHub Release (tag only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/PDFTocTool.exe
+            dist/PDFTocToolCLI.exe
