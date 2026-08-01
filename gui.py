@@ -35,6 +35,7 @@ IMAGE_INLINE_OPTION = '内嵌图片'       # 分辨率下拉框：提取PDF内�
 DEFAULT_IMAGE_RESOLUTION = '300'       # 分辨率默认值（渲染模式的默认分辨率）
 RESOLUTION_MIN = 200                   # 分辨率可输入范围下限
 RESOLUTION_MAX = 600                   # 分辨率可输入范围上限
+RESOLUTION_SELECT_RESET_MS = 500       # 选择下拉项后禁止自动展开的时长
 JPEG_QUALITY_DEFAULT = JPEG_QUALITY_MAX  # 图片提取JPEG质量固定最高
 LOG_PREVIEW_COUNT = 20       # 日志区预览的最大条数
 WATCHDOG_INTERVAL_MS = 4000  # 长时间无进度时的提示更新间隔
@@ -133,7 +134,10 @@ class App:
         self.resolution_box.pack(side='left', padx=4)
         self.resolution_box.bind('<FocusIn>', self._on_resolution_focus_in)
         self.resolution_box.bind('<FocusOut>', self._on_resolution_focus_out)
+        self.resolution_box.bind('<<ComboboxSelected>>', self._on_resolution_selected)
         self.resolution_var.trace_add('write', self._on_resolution_changed)
+        self._resolution_expanded = False       # 本次焦点会话是否已展开过下拉
+        self._resolution_just_selected = False  # 刚选择完下拉项（短暂禁止自动展开）
         self.resolution_state_label = ttk.Label(self.image_options, text='')
         self.resolution_state_label.pack(side='left', padx=(0, 4))
         self._show_resolution_state()
@@ -559,11 +563,37 @@ class App:
         return proposed_value.isdigit()
 
     def _on_resolution_focus_in(self, _event) -> None:
-        """聚焦即展开下拉列表，不用点箭头"""
-        self.resolution_box.after(10, lambda: self.resolution_box.event_generate('<Down>'))
+        """聚焦即展开下拉列表；刚选完下拉项时不再自动展开（防跳动）"""
+        if self._resolution_just_selected:
+            return
+        self.resolution_box.after(10, self._expand_resolution_dropdown)
+
+    def _expand_resolution_dropdown(self) -> None:
+        """展开下拉；已展开过、刚选完项、或焦点已离开时不展开（防失焦后乱跳）"""
+        if self._resolution_expanded or self._resolution_just_selected:
+            return
+        try:
+            has_focus = self.root.focus_get() is self.resolution_box
+        except tk.TclError:
+            has_focus = False
+        if has_focus:
+            self.resolution_box.event_generate('<Down>')
+            self._resolution_expanded = True
+
+    def _on_resolution_selected(self, _event) -> None:
+        """选择完下拉项：短暂禁止自动展开，避免选择后下拉再次弹出"""
+        self._resolution_just_selected = True
+        self._resolution_expanded = True
+        self.resolution_box.after(RESOLUTION_SELECT_RESET_MS, self._reset_resolution_selected)
+
+    def _reset_resolution_selected(self) -> None:
+        """选择抑制期结束：恢复允许自动展开"""
+        self._resolution_just_selected = False
+        self._resolution_expanded = False
 
     def _on_resolution_focus_out(self, _event) -> None:
-        """失焦：联动格式并校验范围提示"""
+        """失焦：复位展开标志（下次聚焦可再展开）、联动格式并校验范围提示"""
+        self._resolution_expanded = False
         self._on_resolution_changed()
         self._show_resolution_state()
 
