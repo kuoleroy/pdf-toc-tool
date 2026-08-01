@@ -507,8 +507,13 @@ class App:
         if not messagebox.askyesno(
                 '确认保存位置',
                 '图片将保存到：\n%s\n\n是否继续？' % output_dir):
-            self.logln('已取消：未确认保存位置')
-            return
+            chosen_parent = filedialog.askdirectory(
+                title='选择保存文件夹（将创建: %s）' % default_dir_name,
+                initialdir=os.path.dirname(pdf_path) or None)
+            if not chosen_parent:
+                self.logln('已取消：未选择保存文件夹')
+                return
+            output_dir = os.path.join(chosen_parent, default_dir_name)
         render_desc = ('页面(分辨率%d)' % render_dpi) if render_dpi else 'PDF内嵌图片'
         self.logln('保存到: %s' % output_dir)
         if page_range is not None:
