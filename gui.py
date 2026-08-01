@@ -125,12 +125,18 @@ class App:
         ttk.Entry(self.image_options, textvariable=self.page_range_var, width=8).pack(side='left', padx=4)
         ttk.Label(self.image_options, text='分辨率:').pack(side='left')
         self.resolution_var = tk.StringVar(value=DEFAULT_IMAGE_RESOLUTION)
+        self._validate_resolution_cmd = root.register(self._validate_resolution_input)
         self.resolution_box = ttk.Combobox(
             self.image_options, textvariable=self.resolution_var, width=8,
-            values=(IMAGE_INLINE_OPTION, '200', '300', '400', '600'))
+            values=(IMAGE_INLINE_OPTION, '200', '300', '400', '600'),
+            validate='key', validatecommand=(self._validate_resolution_cmd, '%P'))
         self.resolution_box.pack(side='left', padx=4)
-        self.resolution_box.bind('<FocusOut>', self._on_resolution_changed)
+        self.resolution_box.bind('<FocusIn>', self._on_resolution_focus_in)
+        self.resolution_box.bind('<FocusOut>', self._on_resolution_focus_out)
         self.resolution_var.trace_add('write', self._on_resolution_changed)
+        self.resolution_state_label = ttk.Label(self.image_options, text='')
+        self.resolution_state_label.pack(side='left', padx=(0, 4))
+        self._show_resolution_state()
         ttk.Label(self.image_options, text='格式:').pack(side='left')
         self.fmt_var = tk.StringVar(value='jpeg')
         ttk.Combobox(self.image_options, textvariable=self.fmt_var, width=7, state='readonly',
@@ -545,6 +551,37 @@ class App:
                           self._tm.cancel_event, self._tm.pause_event, output_dir,
                           page_range[0] if page_range else None,
                           page_range[1] if page_range else None))
+
+    def _validate_resolution_input(self, proposed_value: str) -> bool:
+        """分辨率输入过滤：只允许数字、空串、"内嵌图片"完整文本（其余字符直接拒绝）"""
+        if proposed_value in ('', IMAGE_INLINE_OPTION):
+            return True
+        return proposed_value.isdigit()
+
+    def _on_resolution_focus_in(self, _event) -> None:
+        """聚焦即展开下拉列表，不用点箭头"""
+        self.resolution_box.after(10, lambda: self.resolution_box.event_generate('<Down>'))
+
+    def _on_resolution_focus_out(self, _event) -> None:
+        """失焦：联动格式并校验范围提示"""
+        self._on_resolution_changed()
+        self._show_resolution_state()
+
+    def _show_resolution_state(self) -> None:
+        """分辨率校验提示：数字须在200-600；"内嵌图片"或空不提示；非法字符提示"""
+        text = self.resolution_var.get().strip()
+        if text == IMAGE_INLINE_OPTION or text == '':
+            self.resolution_state_label.configure(text='')
+        elif text.isdigit():
+            value = int(text)
+            if RESOLUTION_MIN <= value <= RESOLUTION_MAX:
+                self.resolution_state_label.configure(text='符合', foreground='green')
+            else:
+                self.resolution_state_label.configure(
+                    text='应在%d-%d' % (RESOLUTION_MIN, RESOLUTION_MAX), foreground='red')
+        else:
+            self.resolution_state_label.configure(
+                text='只允许数字或"内嵌图片"', foreground='red')
 
     def _on_resolution_changed(self, *_args) -> None:
         """分辨率与格式联动：选"内嵌图片"->格式orig；输入数字->格式jpeg"""
