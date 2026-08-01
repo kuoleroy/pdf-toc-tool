@@ -498,23 +498,17 @@ class App:
         jpeg_quality = JPEG_QUALITY_DEFAULT
         # 页号范围：空=全部页；"12-30"=区间；"12"=单页
         page_range = self._parse_image_page_range()
-        # 默认保存位置：PDF同目录的 "<书名>_图片"（自动创建，不弹框）；
-        # 仅当该目录已存在且非空时，询问继续追加或另选目录
+        # 自动确定并创建保存目录（PDF同目录 "<书名>_图片"），弹确认框显示路径；
+        # 不用 askdirectory：它只能选已有目录，无法预填程序新建的目录
         default_dir_name = os.path.splitext(os.path.basename(pdf_path))[0] \
             + core.IMAGE_OUTPUT_SUFFIX
         output_dir = os.path.join(os.path.dirname(pdf_path) or '.', default_dir_name)
-        if os.path.isdir(output_dir) and os.listdir(output_dir):
-            use_existing = messagebox.askyesno(
-                '目录已存在',
-                '目录已存在且非空：\n%s\n\n继续会在其中追加文件，是否继续？' % output_dir)
-            if not use_existing:
-                chosen_parent = filedialog.askdirectory(
-                    title='选择保存文件夹（将创建: %s）' % default_dir_name,
-                    initialdir=os.path.dirname(pdf_path) or None)
-                if not chosen_parent:
-                    self.logln('已取消：未选择保存文件夹')
-                    return
-                output_dir = os.path.join(chosen_parent, default_dir_name)
+        os.makedirs(output_dir, exist_ok=True)
+        if not messagebox.askyesno(
+                '确认保存位置',
+                '图片将保存到：\n%s\n\n是否继续？' % output_dir):
+            self.logln('已取消：未确认保存位置')
+            return
         render_desc = ('页面(分辨率%d)' % render_dpi) if render_dpi else 'PDF内嵌图片'
         self.logln('保存到: %s' % output_dir)
         if page_range is not None:
