@@ -32,7 +32,7 @@ RE_IMAGE_PAGE_RANGE = re.compile(r'^\s*(\d+)\s*(?:[-—–]\s*(\d+))?\s*$')
 PDF_EXTENSIONS = {'.pdf', '.epub', '.mobi', '.azw3', '.prc', '.azw'}
 TXT_EXTENSION = '.txt'
 IMAGE_INLINE_OPTION = '内嵌图片'       # 分辨率下拉框：提取PDF内嵌图片（不渲染）
-DEFAULT_IMAGE_RESOLUTION = '600'       # 分辨率下拉框默认值（渲染模式的默认分辨率）
+DEFAULT_IMAGE_RESOLUTION = '300'       # 分辨率下拉框默认值（渲染模式的默认分辨率）
 JPEG_QUALITY_DEFAULT = JPEG_QUALITY_MAX  # 图片提取JPEG质量固定最高
 LOG_PREVIEW_COUNT = 20       # 日志区预览的最大条数
 WATCHDOG_INTERVAL_MS = 4000  # 长时间无进度时的提示更新间隔
@@ -125,7 +125,7 @@ class App:
         self.resolution_var = tk.StringVar(value=DEFAULT_IMAGE_RESOLUTION)
         ttk.Combobox(self.image_options, textvariable=self.resolution_var, width=8,
                      state='readonly',
-                     values=(IMAGE_INLINE_OPTION, '300', '400', '600')).pack(side='left', padx=4)
+                     values=(IMAGE_INLINE_OPTION, '200', '300', '400')).pack(side='left', padx=4)
         ttk.Label(self.image_options, text='格式:').pack(side='left')
         self.fmt_var = tk.StringVar(value='orig')
         ttk.Combobox(self.image_options, textvariable=self.fmt_var, width=7, state='readonly',
