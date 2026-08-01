@@ -628,7 +628,7 @@ class App:
         """把待解析文本写入临时文件（write/parse_toc 需要文件路径），返回临时路径"""
         temp_preview_path = os.path.join(os.environ.get('TEMP', '.'), OCR_PREVIEW_FILE_NAME)
         try:
-            with open(temp_preview_path, 'w', encoding='utf-8-sig') as output_file:
+            with open(temp_preview_path, 'w', encoding='utf-8') as output_file:
                 output_file.write(text_to_parse)
         except OSError as io_error:
             raise OSError('写入临时文件失败: %s' % io_error)
@@ -692,7 +692,7 @@ class App:
         if not save_path:
             return
         try:
-            with open(save_path, 'w', encoding='utf-8-sig') as output_file:
+            with open(save_path, 'w', encoding='utf-8') as output_file:
                 output_file.write(ocr_result_text)
         except OSError as io_error:
             self.logln('保存失败: %s' % io_error)

@@ -37,7 +37,7 @@ def _make_progress_writer():
 def _write_text_file(output_path: str, content: str) -> None:
     """写入 UTF-8 BOM 文本文件，区分 IO 异常类型"""
     try:
-        with open(output_path, 'w', encoding='utf-8-sig') as output_file:
+        with open(output_path, 'w', encoding='utf-8') as output_file:
             output_file.write(content)
     except OSError as io_error:
         raise OSError('写入文件失败 %s: %s' % (output_path, io_error))

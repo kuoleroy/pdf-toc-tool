@@ -91,7 +91,7 @@ def _mp_extract_toc(q, path, page_fmt) -> None:
         if is_ebook:
             entries = ebook.extract_toc(path)
             out = base_name + '_目录.txt'
-            with open(out, 'w', encoding='utf-8-sig') as file_handle:
+            with open(out, 'w', encoding='utf-8') as file_handle:
                 file_handle.write(ebook.to_txt(entries))
             q.put(('extract_done', True, entries, out))
             return
@@ -318,7 +318,7 @@ def _export_inline_images(doc, out_dir: str, fmt: str, quality: int,
 
 def export_toc_txt(toc: List[List], out_path: str, with_pdf_page: bool = True) -> None:
     """书签导出为txt。缩进2空格/级；with_pdf_page 时行尾带 [p页号]"""
-    with open(out_path, 'w', encoding='utf-8-sig') as file_handle:
+    with open(out_path, 'w', encoding='utf-8') as file_handle:
         for level, title, page in toc:
             indent_text = '  ' * (level - 1)
             if with_pdf_page:
