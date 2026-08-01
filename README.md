@@ -16,6 +16,8 @@ OCR 后端为 [RapidOCR](https://github.com/RapidAI/RapidOCR)（PaddleOCR 模型
 ## 功能
 
 - **提取书签**：从 PDF 提取目录到 txt（含层级缩进与 PDF 页号），修改后可原样回写
+- **提取图片**：提取 PDF 内嵌图片（原样保存或转 PNG/JPEG、自动去重），
+  也可按指定分辨率把每页渲染成图片（PNG/JPEG，JPEG 质量可调）
 - **提取电子书目录**（EPUB / MOBI / AZW3 / PRC）：提取内置目录为 txt（缩进层级 + `[p序号]`，
   序号为目录项在书中的阅读顺序，非页码；EPUB3/EPUB2/新版MOBI均支持，无需额外依赖）
 - **写入书签**：将 txt 目录写入 PDF，兼容两种常见格式（见下）
@@ -68,6 +70,9 @@ python pdf_toc_tool.py ocr <pdf> <起始PDF页>-<结束PDF页> [-a] [-o 输出tx
 
 # 提取电子书内置目录（EPUB/MOBI/AZW3/PRC；[p序号]为阅读顺序号，非页码）
 python pdf_toc_tool.py ebook <电子书> [输出txt]
+
+# 提取PDF图片（默认提取内嵌图片、原样保存；-r 改为按分辨率渲染每页；-f 格式 orig/png/jpeg；-q JPEG质量）
+python pdf_toc_tool.py pdfimages <pdf> [输出目录] [-r 100] [-f jpeg] [-q 80]
 ```
 
 `copy` 生成 `_带目录.pdf` 副本；`same` 直接增量写原文件（建议先备份）。

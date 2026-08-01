@@ -44,6 +44,8 @@ class App:
                         command=self.on_mode).pack(side='left', padx=8, pady=4)
         ttk.Radiobutton(f2, text='提取书签/电子书目录（→ txt）', variable=self.mode, value='extract',
                         command=self.on_mode).pack(side='left', padx=8, pady=4)
+        ttk.Radiobutton(f2, text='提取图片（PDF → 图片文件）', variable=self.mode, value='images',
+                        command=self.on_mode).pack(side='left', padx=8, pady=4)
         self.offset_var = tk.StringVar(value='15')
         self.outmode_var = tk.StringVar(value='copy')
         self.w_opts = ttk.Frame(f2)
@@ -58,6 +60,19 @@ class App:
         ttk.Checkbutton(self.e_opts, text='行尾带[PDF页号]（便于改后回写）', variable=self.e_pdfpage).pack(side='left')
         ttk.Label(self.e_opts, text='（EPUB/MOBI无页码，[p序号]=阅读顺序号）').pack(side='left', padx=6)
         self.e_opts.pack_forget()
+        self.i_opts = ttk.Frame(f2)
+        self.i_opts.pack(side='left', padx=12)
+        ttk.Label(self.i_opts, text='分辨率dpi(留空=内嵌图片):').pack(side='left')
+        self.dpi_var = tk.StringVar()
+        ttk.Entry(self.i_opts, textvariable=self.dpi_var, width=6).pack(side='left', padx=4)
+        ttk.Label(self.i_opts, text='格式:').pack(side='left')
+        self.fmt_var = tk.StringVar(value='orig')
+        ttk.Combobox(self.i_opts, textvariable=self.fmt_var, width=7, state='readonly',
+                     values=('orig', 'png', 'jpeg')).pack(side='left', padx=4)
+        ttk.Label(self.i_opts, text='JPEG质量:').pack(side='left')
+        self.quality_var = tk.StringVar(value='85')
+        ttk.Entry(self.i_opts, textvariable=self.quality_var, width=4).pack(side='left', padx=4)
+        self.i_opts.pack_forget()
 
         focr = ttk.LabelFrame(root, text='OCR 识别目录页（扫描目录 → 可编辑txt → 写入）')
         focr.pack(fill='x', **pad)
@@ -117,9 +132,15 @@ class App:
         if self.mode.get() == 'write':
             self.w_opts.pack(side='left', padx=12)
             self.e_opts.pack_forget()
-        else:
+            self.i_opts.pack_forget()
+        elif self.mode.get() == 'extract':
             self.w_opts.pack_forget()
             self.e_opts.pack(side='left', padx=12)
+            self.i_opts.pack_forget()
+        else:
+            self.w_opts.pack_forget()
+            self.e_opts.pack_forget()
+            self.i_opts.pack(side='left', padx=12)
 
     def logln(self, s):
         self.log.insert('end', s + '\n')
@@ -129,11 +150,33 @@ class App:
         try:
             if self.mode.get() == 'write':
                 self.do_write()
-            else:
+            elif self.mode.get() == 'extract':
                 self.do_extract()
+            else:
+                self.do_images()
         except Exception as e:
             self.logln('错误: %s' % e)
             messagebox.showerror('错误', str(e))
+
+    def do_images(self):
+        pdf = self.pdf_var.get().strip()
+        if not pdf:
+            raise ValueError('请选择PDF文件')
+        if not os.path.isfile(pdf):
+            raise ValueError('PDF文件不存在: %s' % pdf)
+        dpi_text = self.dpi_var.get().strip()
+        dpi = int(dpi_text) if dpi_text else None
+        if dpi is not None and not (1 <= dpi <= 1000):
+            raise ValueError('分辨率dpi应在1-1000之间')
+        fmt = self.fmt_var.get().strip().lower() or 'orig'
+        quality = int(self.quality_var.get().strip() or '85')
+        if not (1 <= quality <= 100):
+            raise ValueError('JPEG质量应在1-100之间')
+        self.logln('正在提取%s（%s）…' % ('页面' if dpi else 'PDF内嵌图片', fmt))
+        out_dir, count = core.extract_images(pdf, dpi=dpi, fmt=fmt, quality=quality)
+        self.logln('提取完成: %d 张%s' % (count, '页面' if dpi else '图片'))
+        self.logln('已保存到: %s' % out_dir)
+        messagebox.showinfo('完成', '已提取 %d 张%s\n%s' % (count, '页面' if dpi else '图片', out_dir))
 
     def do_write(self):
         pdf = self.pdf_var.get().strip()
