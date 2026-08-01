@@ -8,9 +8,10 @@ from tkinter import filedialog, messagebox, ttk
 import fitz
 
 import core
+import ebook
 import ocr
 
-VERSION = '1.1'
+VERSION = '1.2'
 
 
 class App:
@@ -29,7 +30,7 @@ class App:
         row.pack(fill='x', **pad)
         ttk.Label(row, text='PDF文件:').pack(side='left')
         ttk.Entry(row, textvariable=self.pdf_var).pack(side='left', fill='x', expand=True, padx=4)
-        ttk.Button(row, text='浏览…', command=lambda: self.browse(self.pdf_var, '选择PDF文件', [('PDF', '*.pdf')])).pack(side='left')
+        ttk.Button(row, text='浏览…', command=lambda: self.browse(self.pdf_var, '选择PDF/电子书文件', [('PDF/电子书', '*.pdf *.epub *.mobi *.azw3 *.prc'), ('全部', '*.*')])).pack(side='left')
         row = ttk.Frame(f1)
         row.pack(fill='x', **pad)
         ttk.Label(row, text='目录txt:').pack(side='left')
@@ -41,7 +42,7 @@ class App:
         self.mode = tk.StringVar(value='write')
         ttk.Radiobutton(f2, text='写入书签（txt → PDF）', variable=self.mode, value='write',
                         command=self.on_mode).pack(side='left', padx=8, pady=4)
-        ttk.Radiobutton(f2, text='提取书签（PDF → txt）', variable=self.mode, value='extract',
+        ttk.Radiobutton(f2, text='提取书签/电子书目录（→ txt）', variable=self.mode, value='extract',
                         command=self.on_mode).pack(side='left', padx=8, pady=4)
         self.offset_var = tk.StringVar(value='15')
         self.outmode_var = tk.StringVar(value='copy')
@@ -55,6 +56,7 @@ class App:
         self.e_opts.pack(side='left', padx=12)
         self.e_pdfpage = tk.BooleanVar(value=True)
         ttk.Checkbutton(self.e_opts, text='行尾带[PDF页号]（便于改后回写）', variable=self.e_pdfpage).pack(side='left')
+        ttk.Label(self.e_opts, text='（EPUB/MOBI无页码，[p序号]=阅读顺序号）').pack(side='left', padx=6)
         self.e_opts.pack_forget()
 
         focr = ttk.LabelFrame(root, text='OCR 识别目录页（扫描目录 → 可编辑txt → 写入）')
@@ -160,16 +162,29 @@ class App:
         messagebox.showinfo('完成', '已写入 %d 条书签\n%s' % (n, out))
 
     def do_extract(self):
-        pdf = self.pdf_var.get().strip()
-        if not pdf:
-            raise ValueError('请选择PDF文件')
-        if not os.path.isfile(pdf):
-            raise ValueError('PDF文件不存在: %s' % pdf)
-        toc = core.read_toc(pdf)
+        path = self.pdf_var.get().strip()
+        if not path:
+            raise ValueError('请选择PDF或电子书文件')
+        if not os.path.isfile(path):
+            raise ValueError('文件不存在: %s' % path)
+        base, ext = os.path.splitext(path)
+        if ebook.is_ebook(path):
+            entries = ebook.extract_toc(path)
+            out = base + '_目录.txt'
+            with open(out, 'w', encoding='utf-8-sig') as f:
+                f.write(ebook.to_txt(entries))
+            self.logln('提取完成: %d 条目录（[p序号]为阅读顺序号，非页码）' % len(entries))
+            for indent, title, seq in entries[:20]:
+                self.logln('%s%s [p%d]' % ('  ' * indent, title, seq))
+            if len(entries) > 20:
+                self.logln('... 共 %d 条' % len(entries))
+            self.logln('已保存到: %s' % out)
+            messagebox.showinfo('完成', '已提取 %d 条目录\n%s' % (len(entries), out))
+            return
+        toc = core.read_toc(path)
         if not toc:
             self.logln('该PDF没有书签。')
             return
-        base, ext = os.path.splitext(pdf)
         out = base + '_书签' + ext.replace('.pdf', '.txt')
         core.export_toc_txt(toc, out, self.e_pdfpage.get())
         self.logln('提取完成: %d 条书签' % len(toc))

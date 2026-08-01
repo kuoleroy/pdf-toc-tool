@@ -16,6 +16,8 @@ OCR 后端为 [RapidOCR](https://github.com/RapidAI/RapidOCR)（PaddleOCR 模型
 ## 功能
 
 - **提取书签**：从 PDF 提取目录到 txt（含层级缩进与 PDF 页号），修改后可原样回写
+- **提取电子书目录**（EPUB / MOBI / AZW3 / PRC）：提取内置目录为 txt（缩进层级 + `[p序号]`，
+  序号为目录项在书中的阅读顺序，非页码；EPUB3/EPUB2/新版MOBI均支持，无需额外依赖）
 - **写入书签**：将 txt 目录写入 PDF，兼容两种常见格式（见下）
 - **OCR 识别目录**（带OCR版）：给定扫描目录页的 PDF 页号范围，自动识别为可编辑 txt，
   支持页码范围（`1-85`）、自动合并被拆散的标题/页码、自动检测页码偏移。
@@ -31,10 +33,14 @@ OCR 后端为 [RapidOCR](https://github.com/RapidAI/RapidOCR)（PaddleOCR 模型
 python pdf_toc_tool.py
 ```
 
-1. 选择 PDF 文件（写入模式还需选择目录 txt）
-2. 选择"写入书签"或"提取书签"
+1. 选择 PDF 或电子书文件（写入模式还需选择目录 txt）
+2. 选择"写入书签"或"提取书签/电子书目录"
 3. 写入模式设置印刷页偏移（默认 15，见"页码偏移"一节；带OCR版可自动检测）
 4. 预览后执行
+
+选择 EPUB / MOBI / AZW3 文件并点"提取书签/电子书目录"，即提取内置目录到同目录 `_目录.txt`。
+电子书没有页码，行尾 `[p序号]` 为目录项在书中出现的顺序号，可方便查看/整理目录；
+若需用于 PDF 写入，请把序号替换为真实 PDF 页号（或改回印刷页码 + 偏移）。
 
 带OCR版还可在"OCR 识别目录页"区域输入扫描目录页的 **PDF 页号**范围（如 `11-16`），
 点"识别目录"后到"OCR结果"页签检查、修改，再点"确认写入"。
@@ -59,6 +65,9 @@ python pdf_toc_tool.py write <pdf> <目录txt> [偏移(默认15)] [copy|same]
 
 # OCR 识别目录页（带OCR版；-a 自动检测偏移）
 python pdf_toc_tool.py ocr <pdf> <起始PDF页>-<结束PDF页> [-a] [-o 输出txt]
+
+# 提取电子书内置目录（EPUB/MOBI/AZW3/PRC；[p序号]为阅读顺序号，非页码）
+python pdf_toc_tool.py ebook <电子书> [输出txt]
 ```
 
 `copy` 生成 `_带目录.pdf` 副本；`same` 直接增量写原文件（建议先备份）。
@@ -123,6 +132,7 @@ txt 中的页码通常是"印刷页码"，而 PDF 文件（扫描件）开头还
 pdf-toc-tool/
 ├── pdf_toc_tool.py        # 入口（无参数=GUI，带参数=CLI）
 ├── core.py                # 核心逻辑：txt解析、书签写入/提取
+├── ebook.py               # 电子书内置目录提取（EPUB/MOBI/AZW3，仅标准库）
 ├── ocr.py                 # OCR（可选依赖，未装时自动禁用）
 ├── gui.py                 # tkinter 图形界面
 ├── cli.py                 # 命令行接口

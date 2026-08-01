@@ -5,6 +5,7 @@ import re
 import sys
 
 import core
+import ebook
 import ocr
 
 
@@ -13,6 +14,7 @@ def _print_usage():
     print('  %s extract <pdf> [输出txt]' % os.path.basename(sys.argv[0]))
     print('  %s write <pdf> <目录txt> [偏移(默认15)] [copy|same]' % os.path.basename(sys.argv[0]))
     print('  %s ocr <pdf> <起始PDF页>-<结束PDF页> [-a] [-o 输出txt]   (OCR目录页，需带OCR版；-a=自动检测偏移并打印)' % os.path.basename(sys.argv[0]))
+    print('  %s ebook <电子书> [输出txt]   (提取EPUB/MOBI/AZW3内置目录，页码为阅读顺序号[p序号])' % os.path.basename(sys.argv[0]))
 
 
 def main(args):
@@ -73,6 +75,15 @@ def main(args):
             print('OCR完成 -> %s' % out_path)
         else:
             print(txt)
+        return 0
+    if cmd == 'ebook' and len(args) >= 2:
+        book = args[1]
+        out = args[2] if len(args) > 2 else os.path.splitext(book)[0] + '_目录.txt'
+        entries = ebook.extract_toc(book)
+        txt = ebook.to_txt(entries)
+        with open(out, 'w', encoding='utf-8-sig') as f:
+            f.write(txt)
+        print('提取 %d 条目录（[p序号]为阅读顺序号，非页码） -> %s' % (len(entries), out))
         return 0
     _print_usage()
     return 1
