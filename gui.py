@@ -104,28 +104,9 @@ class App:
             ttk.Entry(row, textvariable=self.ocr_range_var, width=12).pack(side='left', padx=4)
             self.btn_ocr = ttk.Button(row, text='识别目录', command=self.do_ocr)
             self.btn_ocr.pack(side='left', padx=8)
-            self.hint(row, '自动检测偏移；结果可编辑后[确认写入]；偏移在“2.操作”里填正文第一页的PDF页号+印刷页码', wrap=430).pack(side='left', padx=8)
+            self.hint(row, '识别中可点底部[暂停]/[停止]；自动检测偏移；结果可编辑后[确认写入]', wrap=430).pack(side='left', padx=8)
         else:
             self.hint(focr, 'OCR组件未安装：本程序为“不带OCR版”。请下载“带OCR版”exe，或 pip install paddleocr 后运行源码。', wrap=760).pack(anchor='w', **pad)
-
-        f3 = ttk.LabelFrame(root, text='3. 预览 / 日志')
-        f3.pack(fill='both', expand=True, **pad)
-        self.nb = ttk.Notebook(f3)
-        self.nb.pack(fill='both', expand=True, padx=6, pady=6)
-        f_log = ttk.Frame(self.nb)
-        self.log = tk.Text(f_log, font=('Consolas', 9))
-        sb = ttk.Scrollbar(f_log, command=self.log.yview)
-        self.log.configure(yscrollcommand=sb.set)
-        sb.pack(side='right', fill='y')
-        self.log.pack(side='left', fill='both', expand=True)
-        self.nb.add(f_log, text='日志')
-        f_ocr = ttk.Frame(self.nb)
-        self.ocr_text = tk.Text(f_ocr, font=('Consolas', 9), wrap='none')
-        sb2 = ttk.Scrollbar(f_ocr, command=self.ocr_text.yview)
-        self.ocr_text.configure(yscrollcommand=sb2.set)
-        sb2.pack(side='right', fill='y')
-        self.ocr_text.pack(side='left', fill='both', expand=True)
-        self.nb.add(f_ocr, text='OCR结果（可编辑）')
 
         fprog = ttk.Frame(root)
         fprog.pack(fill='x', **pad)
@@ -149,6 +130,25 @@ class App:
         self.btn_stop = ttk.Button(f4b, text='停止', width=6, command=self.stop_task, state='disabled')
         self.btn_stop.pack(side='right', padx=4)
         ttk.Button(f4b, text='清空日志', width=8, command=lambda: self.log.delete('1.0', 'end')).pack(side='right', padx=4)
+
+        f3 = ttk.LabelFrame(root, text='3. 预览 / 日志')
+        f3.pack(fill='both', expand=True, **pad)
+        self.nb = ttk.Notebook(f3)
+        self.nb.pack(fill='both', expand=True, padx=6, pady=6)
+        f_log = ttk.Frame(self.nb)
+        self.log = tk.Text(f_log, font=('Consolas', 9))
+        sb = ttk.Scrollbar(f_log, command=self.log.yview)
+        self.log.configure(yscrollcommand=sb.set)
+        sb.pack(side='right', fill='y')
+        self.log.pack(side='left', fill='both', expand=True)
+        self.nb.add(f_log, text='日志')
+        f_ocr = ttk.Frame(self.nb)
+        self.ocr_text = tk.Text(f_ocr, font=('Consolas', 9), wrap='none')
+        sb2 = ttk.Scrollbar(f_ocr, command=self.ocr_text.yview)
+        self.ocr_text.configure(yscrollcommand=sb2.set)
+        sb2.pack(side='right', fill='y')
+        self.ocr_text.pack(side='left', fill='both', expand=True)
+        self.nb.add(f_ocr, text='OCR结果（可编辑）')
 
     def hint(self, parent, text, wrap=0):
         """灰色小字提示"""
@@ -443,6 +443,16 @@ class App:
 
     def do_ocr(self):
         try:
+            pdf = self.pdf_var.get().strip()
+            rng = self.ocr_range_var.get().strip()
+            if (not pdf or not os.path.isfile(pdf)
+                    or not re.match(r'^\s*\d+\s*[-—–]\s*\d+\s*$', rng)):
+                fields = dlg.ask_ocr_args(self.root, self.pdf_var, self.ocr_range_var)
+                if fields is None:
+                    self.logln('已取消：未填写OCR识别信息')
+                    return
+                self.pdf_var.set(fields[0])
+                self.ocr_range_var.set(fields[1])
             pdf, start, end = self._get_ocr_args()
             self.logln('加载OCR引擎并识别 PDF页 %d-%d …（首次运行下载模型，约需几分钟）' % (start, end))
             self._task_start('ocr', ocr._mp_ocr_task,
