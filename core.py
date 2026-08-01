@@ -52,11 +52,15 @@ def check_task(cancel_event=None, pause_event=None) -> None:
             time.sleep(0.1)
 
 
-def _mp_extract_images(q, pdf_path, dpi, fmt, quality, cancel_event, pause_event) -> None:
-    """子进程入口：提取图片，进度/结果经 multiprocessing.Queue 回传"""
+def _mp_extract_images(q, pdf_path, dpi, fmt, quality, cancel_event, pause_event,
+                       out_dir=None) -> None:
+    """子进程入口：提取图片，进度/结果经 multiprocessing.Queue 回传
+
+    out_dir 可选：为 None 时默认 PDF 同目录的 "<书名>_图片" 文件夹
+    """
     try:
         out_dir, image_count = extract_images(
-            pdf_path, None, dpi, fmt, quality,
+            pdf_path, out_dir, dpi, fmt, quality,
             progress=lambda done, total, message: q.put(('progress', done, total, message)),
             cancel_event=cancel_event, pause_event=pause_event)
         q.put(('done', out_dir, image_count))

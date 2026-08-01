@@ -219,9 +219,14 @@ class App:
 
     def _register_drop(self, target_entry: ttk.Entry) -> None:
         """注册拖放目标：支持把文件直接拖入输入框（需 tkinterdnd2）"""
-        if HAS_DND:
+        if not HAS_DND:
+            return
+        try:
             target_entry.drop_target_register(DND_FILES)
             target_entry.dnd_bind('<<Drop>>', self._on_file_drop)
+        except tk.TclError:
+            # 非 TkinterDnD 根窗口（如无拖拽的测试环境）下 tkdnd 命令不可用，忽略即可
+            pass
 
     def _on_file_drop(self, event) -> str:
         """处理拖入的文件：按扩展名归类填入PDF/txt输入框（混合拖入则分别填入）"""
@@ -488,10 +493,20 @@ class App:
             raise ValueError('JPEG质量必须是整数')
         if not (JPEG_QUALITY_MIN <= jpeg_quality <= JPEG_QUALITY_MAX):
             raise ValueError('JPEG质量应在%d-%d之间' % (JPEG_QUALITY_MIN, JPEG_QUALITY_MAX))
+        # 弹框选择保存位置（父目录），文件夹名固定 "<书名>_图片"，可取消
+        default_dir_name = os.path.splitext(os.path.basename(pdf_path))[0] \
+            + core.IMAGE_OUTPUT_SUFFIX
+        chosen_parent = filedialog.askdirectory(
+            title='选择保存文件夹（将创建: %s）' % default_dir_name,
+            initialdir=os.path.dirname(pdf_path) or None)
+        if not chosen_parent:
+            self.logln('已取消：未选择保存文件夹')
+            return
+        output_dir = os.path.join(chosen_parent, default_dir_name)
         self.logln('正在提取%s（%s）…' % ('页面' if render_dpi else 'PDF内嵌图片', image_format))
         self._task_start('images', core._mp_extract_images,
                          (pdf_path, render_dpi, image_format, jpeg_quality,
-                          self._tm.cancel_event, self._tm.pause_event))
+                          self._tm.cancel_event, self._tm.pause_event, output_dir))
 
     def do_write(self) -> None:
         pdf_path = self.pdf_var.get().strip()
