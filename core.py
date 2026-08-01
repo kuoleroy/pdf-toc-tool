@@ -226,13 +226,16 @@ def read_toc(pdf_path: str) -> List[List]:
 
 def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[int] = None,
                    fmt: str = 'orig', quality: int = 85, progress: Optional[Callable] = None,
-                   cancel_event=None, pause_event=None) -> Tuple[str, int]:
+                   cancel_event=None, pause_event=None,
+                   start_page: Optional[int] = None, end_page: Optional[int] = None
+                   ) -> Tuple[str, int]:
     """提取PDF图片 -> (输出目录, 图片数)
 
     - dpi=None：提取内嵌图片（fmt='orig' 原样保存，或转 png/jpeg）
     - dpi=整数：按分辨率渲染每页为图片（fmt: png/jpeg，默认 png）
     - quality：JPEG质量(1-100)；progress(done, total, msg)：进度回调
     - cancel_event/pause_event：threading.Event，支持停止/暂停（页间生效）
+    - start_page/end_page：限定提取的PDF页号范围（1-based，含边界），None=全部
     """
     fmt = (fmt or 'orig').lower()
     if fmt not in IMAGE_FORMATS:
@@ -241,6 +244,10 @@ def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[i
         fmt = 'png'
     if not (JPEG_QUALITY_MIN <= quality <= JPEG_QUALITY_MAX):
         raise ValueError('JPEG质量应在 %d-%d 之间' % (JPEG_QUALITY_MIN, JPEG_QUALITY_MAX))
+    if start_page is not None and start_page < 1:
+        raise ValueError('起始页号必须 >= 1')
+    if start_page is not None and end_page is not None and start_page > end_page:
+        raise ValueError('页号范围无效：起始页大于结束页')
     if out_dir is None:
         base_name, _ = os.path.splitext(pdf_path)
         out_dir = base_name + IMAGE_OUTPUT_SUFFIX
@@ -249,28 +256,44 @@ def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[i
     try:
         if dpi:
             image_count = _export_rendered_pages(doc, out_dir, dpi, fmt, quality,
-                                                 progress, cancel_event, pause_event)
+                                                 progress, cancel_event, pause_event,
+                                                 start_page, end_page)
         else:
             image_count = _export_inline_images(doc, out_dir, fmt, quality,
-                                                progress, cancel_event, pause_event)
+                                                progress, cancel_event, pause_event,
+                                                start_page, end_page)
     finally:
         doc.close()
     return out_dir, image_count
 
 
+def _resolve_page_range(doc, start_page: Optional[int], end_page: Optional[int]
+                        ) -> Tuple[int, int]:
+    """把1-based页号范围解析为半开区间索引 [start_index, end_index)，None=全部"""
+    start_index = 0 if start_page is None else max(start_page - 1, 0)
+    end_index = doc.page_count if end_page is None else min(end_page, doc.page_count)
+    if start_index > end_index:
+        start_index = end_index
+    return start_index, end_index
+
+
 def _export_rendered_pages(doc, out_dir: str, dpi: int, fmt: str, quality: int,
-                           progress: Optional[Callable], cancel_event, pause_event) -> int:
-    """按分辨率渲染每页 -> 图片文件，返回导出数"""
-    total_pages = doc.page_count
+                           progress: Optional[Callable], cancel_event, pause_event,
+                           start_page: Optional[int] = None,
+                           end_page: Optional[int] = None) -> int:
+    """按分辨率渲染页 -> 图片文件，返回导出数（可限定页号范围）"""
+    start_index, end_index = _resolve_page_range(doc, start_page, end_page)
+    total_pages = end_index - start_index
     exported_count = 0
-    for page_index in range(total_pages):
+    for page_index in range(start_index, end_index):
         check_task(cancel_event, pause_event)
         pixmap = doc[page_index].get_pixmap(dpi=dpi, alpha=(fmt != 'jpeg'))
         file_name = '第%03d页.%s' % (page_index + 1, EXTENSION_BY_FORMAT[fmt])
         pixmap.save(os.path.join(out_dir, file_name), jpg_quality=quality)
         exported_count += 1
         if progress:
-            progress(page_index + 1, total_pages, '渲染第 %d/%d 页' % (page_index + 1, total_pages))
+            progress(page_index - start_index + 1, total_pages,
+                     '渲染第 %d/%d 页' % (page_index - start_index + 1, total_pages))
     return exported_count
 
 
@@ -292,12 +315,15 @@ def _extract_single_image(doc, xref: int, fmt: str, quality: int) -> Optional[by
 
 
 def _export_inline_images(doc, out_dir: str, fmt: str, quality: int,
-                          progress: Optional[Callable], cancel_event, pause_event) -> int:
-    """提取PDF内嵌图片（按内容MD5去重），返回导出数"""
+                          progress: Optional[Callable], cancel_event, pause_event,
+                          start_page: Optional[int] = None,
+                          end_page: Optional[int] = None) -> int:
+    """提取PDF内嵌图片（按内容MD5去重，可限定页号范围），返回导出数"""
     saved_digest_set = set()
     exported_count = 0
-    total_pages = doc.page_count
-    for page_index in range(total_pages):
+    start_index, end_index = _resolve_page_range(doc, start_page, end_page)
+    total_pages = end_index - start_index
+    for page_index in range(start_index, end_index):
         check_task(cancel_event, pause_event)
         for image_ref in doc.get_page_images(page_index, full=True):
             xref_number = image_ref[0]
@@ -314,7 +340,8 @@ def _export_inline_images(doc, out_dir: str, fmt: str, quality: int,
             with open(os.path.join(out_dir, file_name), 'wb') as file_handle:
                 file_handle.write(image_data)
         if progress:
-            progress(page_index + 1, total_pages, '扫描第 %d/%d 页' % (page_index + 1, total_pages))
+            progress(page_index - start_index + 1, total_pages,
+                     '扫描第 %d/%d 页' % (page_index - start_index + 1, total_pages))
     return exported_count
 
 

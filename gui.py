@@ -27,6 +27,7 @@ VERSION = '1.2.1'
 # ---- 常量 ----
 PADDING = {'padx': 8, 'pady': 4}
 RE_PAGE_RANGE = re.compile(r'^\s*(\d+)\s*[-—–]\s*(\d+)\s*$')
+RE_IMAGE_PAGE_RANGE = re.compile(r'^\s*(\d+)\s*(?:[-—–]\s*(\d+))?\s*$')
 PDF_EXTENSIONS = {'.pdf', '.epub', '.mobi', '.azw3', '.prc', '.azw'}
 TXT_EXTENSION = '.txt'
 DPI_MIN = 1
@@ -118,6 +119,9 @@ class App:
         self.extract_options.pack_forget()
         self.image_options = ttk.Frame(action_options_frame)
         self.image_options.pack(side='left', padx=12)
+        ttk.Label(self.image_options, text='页号(空=全部):').pack(side='left')
+        self.page_range_var = tk.StringVar()
+        ttk.Entry(self.image_options, textvariable=self.page_range_var, width=8).pack(side='left', padx=4)
         ttk.Label(self.image_options, text='dpi(空=内嵌):').pack(side='left')
         self.dpi_var = tk.StringVar()
         ttk.Entry(self.image_options, textvariable=self.dpi_var, width=6).pack(side='left', padx=4)
@@ -497,6 +501,8 @@ class App:
             raise ValueError('JPEG质量必须是整数')
         if not (JPEG_QUALITY_MIN <= jpeg_quality <= JPEG_QUALITY_MAX):
             raise ValueError('JPEG质量应在%d-%d之间' % (JPEG_QUALITY_MIN, JPEG_QUALITY_MAX))
+        # 页号范围：空=全部页；"12-30"=区间；"12"=单页
+        page_range = self._parse_image_page_range()
         # 弹框选择保存位置（父目录），文件夹名固定 "<书名>_图片"，可取消
         default_dir_name = os.path.splitext(os.path.basename(pdf_path))[0] \
             + core.IMAGE_OUTPUT_SUFFIX
@@ -507,10 +513,31 @@ class App:
             self.logln('已取消：未选择保存文件夹')
             return
         output_dir = os.path.join(chosen_parent, default_dir_name)
-        self.logln('正在提取%s（%s）…' % ('页面' if render_dpi else 'PDF内嵌图片', image_format))
+        if page_range is not None:
+            self.logln('正在提取%s（%s）页 %d-%d…'
+                       % ('页面' if render_dpi else 'PDF内嵌图片', image_format,
+                          page_range[0], page_range[1]))
+        else:
+            self.logln('正在提取%s（%s）…' % ('页面' if render_dpi else 'PDF内嵌图片', image_format))
         self._task_start('images', core._mp_extract_images,
                          (pdf_path, render_dpi, image_format, jpeg_quality,
-                          self._tm.cancel_event, self._tm.pause_event, output_dir))
+                          self._tm.cancel_event, self._tm.pause_event, output_dir,
+                          page_range[0] if page_range else None,
+                          page_range[1] if page_range else None))
+
+    def _parse_image_page_range(self) -> Optional[Tuple[int, int]]:
+        """解析图片页号范围输入：空=None(全部)，"12-30"=区间，"12"=单页"""
+        range_text = self.page_range_var.get().strip()
+        if not range_text:
+            return None
+        match = RE_IMAGE_PAGE_RANGE.match(range_text)
+        if not match:
+            raise ValueError('页号范围格式应为"12-30"或"12"（空=全部页）')
+        start_page = int(match.group(1))
+        end_page = int(match.group(2)) if match.group(2) else start_page
+        if start_page < 1 or end_page < start_page:
+            raise ValueError('页号范围无效：起始页>=1 且 起始页<=结束页')
+        return start_page, end_page
 
     def do_write(self) -> None:
         pdf_path = self.pdf_var.get().strip()
