@@ -504,10 +504,18 @@ class App:
             return
         pdf = self.pdf_var.get().strip()
         base, _ = os.path.splitext(pdf)
-        out = (base + '_目录.txt') if base else 'OCR结果_目录.txt'
-        with open(out, 'w', encoding='utf-8-sig') as f:
-            f.write(txt)
-        self.logln('已保存: %s' % out)
+        if not base:
+            base = 'OCR结果'
+        p = filedialog.asksaveasfilename(
+            title='保存OCR结果',
+            defaultextension='.txt',
+            filetypes=[('文本', '*.txt')],
+            initialdir=os.path.dirname(pdf) or None,
+            initialfile=os.path.basename(base) + '_目录.txt')
+        if p:
+            with open(p, 'w', encoding='utf-8-sig') as f:
+                f.write(txt)
+            self.logln('已保存: %s' % p)
 
 
 def main():
