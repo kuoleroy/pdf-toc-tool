@@ -30,6 +30,7 @@ class App:
         self._task = None
         self._watchdog_id = None
         self._paused = False
+        self._has_progress = False
 
         f1 = ttk.LabelFrame(root, text='1. 选择文件')
         f1.pack(fill='x', **pad)
@@ -188,6 +189,7 @@ class App:
             return
         self._task = task_type
         self._paused = False
+        self._has_progress = False
         self.btn_pause.configure(text='暂停', state='normal')
         self.btn_stop.configure(state='normal')
         for b in (self.btn_run, self.btn_confirm, self.btn_save_ocr):
@@ -228,12 +230,10 @@ class App:
     def _prog_show(self, d, t, m):
         if self._task is None:
             return
+        self._has_progress = True
         if self._watchdog_id is not None:
             self.root.after_cancel(self._watchdog_id)
             self._watchdog_id = None
-        if self.prog.cget('mode') == 'indeterminate':
-            self.prog.stop()
-            self.prog.configure(mode='determinate')
         self.prog.configure(maximum=max(t, 1), value=max(d, 0))
         self.prog_label.configure(text=m if m else '')
         self._watchdog_schedule()
@@ -247,10 +247,11 @@ class App:
         self._watchdog_id = None
         if self._task is None:
             return
-        self.prog.stop()
-        self.prog.configure(mode='indeterminate')
-        self.prog.start(12)
-        self.prog_label.configure(text='打开/加载中…')
+        # 保持填充式进度条，仅更新提示文字（模型加载/打开文件等阶段无进度信息）
+        if self._has_progress:
+            self.prog_label.configure(text='处理中…（长时间无进度更新）')
+        else:
+            self.prog_label.configure(text='打开/加载中…')
 
     def _poll_queue(self):
         if self._task is None:
