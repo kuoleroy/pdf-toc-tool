@@ -121,12 +121,14 @@ class App:
         if ocr.HAS_OCR:
             row_frame = ttk.Frame(ocr_frame)
             row_frame.pack(fill='x', **PADDING)
-            ttk.Label(row_frame, text='目录页PDF页号:').pack(side='left')
+            ttk.Label(row_frame, text='页号范围:').pack(side='left')
             self.ocr_range_var = tk.StringVar()
             ttk.Entry(row_frame, textvariable=self.ocr_range_var, width=12).pack(side='left', padx=4)
             self.btn_ocr = ttk.Button(row_frame, text='识别目录', command=self.do_ocr)
             self.btn_ocr.pack(side='left', padx=8)
-            self.hint(row_frame, '识别中可点底部[暂停]/[停止]；自动检测偏移；结果可编辑后[确认写入]',
+            self.btn_ocr_text = ttk.Button(row_frame, text='识别文字', command=self.do_ocr_text)
+            self.btn_ocr_text.pack(side='left', padx=8)
+            self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[识别目录]自动检测偏移；结果可编辑后[确认写入]或[保存OCR结果…]',
                       wrap=430).pack(side='left', padx=8)
         else:
             self.hint(ocr_frame,
@@ -175,7 +177,13 @@ class App:
         self.log.pack(side='left', fill='both', expand=True)
         self.nb.add(log_tab, text='日志')
         ocr_tab = ttk.Frame(self.nb)
-        self.ocr_text = tk.Text(ocr_tab, font=('Consolas', 9), wrap='none')
+        # undo=True 启用撤销栈，配合 Ctrl+Z/Ctrl+Y 编辑 OCR 结果（默认 Text 无此能力）
+        self.ocr_text = tk.Text(ocr_tab, font=('Consolas', 9), wrap='none', undo=True,
+                                maxundo=-1)
+        self.ocr_text.bind('<Control-z>', self._undo_ocr_text)
+        self.ocr_text.bind('<Control-y>', self._redo_ocr_text)
+        self.ocr_text.bind('<Control-Z>', self._redo_ocr_text)
+        self.ocr_text.bind('<Control-s>', self._save_ocr_shortcut)
         ocr_scrollbar = ttk.Scrollbar(ocr_tab, command=self.ocr_text.yview)
         self.ocr_text.configure(yscrollcommand=ocr_scrollbar.set)
         ocr_scrollbar.pack(side='right', fill='y')
@@ -214,6 +222,28 @@ class App:
         self.log.insert('end', text + '\n')
         self.log.see('end')
 
+    def _undo_ocr_text(self, _event=None) -> str:
+        """Ctrl+Z 撤销；撤销栈为空时忽略"""
+        try:
+            self.ocr_text.edit_undo()
+        except tk.TclError:
+            pass
+        return 'break'
+
+    def _redo_ocr_text(self, _event=None) -> str:
+        """Ctrl+Y / Ctrl+Shift+Z 重做；无重做记录时忽略"""
+        try:
+            self.ocr_text.edit_redo()
+        except tk.TclError:
+            pass
+        return 'break'
+
+    def _save_ocr_shortcut(self, _event=None) -> str:
+        """Ctrl+S 保存OCR结果；仅光标在OCR结果编辑区时触发，内容为空时忽略"""
+        if self.ocr_text.get('1.0', 'end').strip():
+            self._prompt_save_ocr_result()
+        return 'break'
+
     # ---- 后台任务 ----
 
     def _task_start(self, task_type: str, target: Callable, arguments: Tuple) -> None:
@@ -231,6 +261,7 @@ class App:
         self.btn_browse_txt.configure(state='disabled')
         if ocr.HAS_OCR:
             self.btn_ocr.configure(state='disabled')
+            self.btn_ocr_text.configure(state='disabled')
         self._prog_reset()
         self.prog_label.configure(text='启动中…')
         self._tm.start(target, arguments)
@@ -255,6 +286,7 @@ class App:
         self.btn_browse_txt.configure(state='normal')
         if ocr.HAS_OCR:
             self.btn_ocr.configure(state='normal')
+            self.btn_ocr_text.configure(state='normal')
         self.btn_pause.configure(state='disabled')
         self.btn_stop.configure(state='disabled')
         return finished_type
@@ -339,6 +371,14 @@ class App:
             self.ocr_text.insert('1.0', ocr_result_text)
             self.nb.select(1)
             self.logln('OCR完成。可在"OCR结果"页签修改后点[确认写入]。')
+        elif message_kind == 'ocr_text_done':
+            self._task_end()
+            _kind, extracted_text = message
+            self.ocr_text.delete('1.0', 'end')
+            self.ocr_text.insert('1.0', extracted_text)
+            self.nb.select(1)
+            self.logln('文字识别完成。结果在"OCR结果"页签，可编辑后[保存OCR结果…]。')
+            self._prompt_save_ocr_result()
         elif message_kind == 'ocr_offset':
             self._task_end()
             _kind, offset = message
@@ -346,6 +386,7 @@ class App:
                 self.logln('自动检测：PDF页偏移=%d。写入书签时请在"2.操作"填正文第一页的PDF页号和印刷页码。' % offset)
             else:
                 self.logln('自动检测偏移失败。请在"2.操作"填正文第一页的PDF页号和印刷页码。')
+            self._prompt_save_ocr_result()
         elif message_kind == 'error':
             self._task_end()
             error_message = message[1]
@@ -483,22 +524,47 @@ class App:
         """弹框要求填写正文第一页的PDF页号和印刷页码；返回 (pdf_no, print_no) 或 None(取消)"""
         return dlg.ask_offset_fields(self.root, self.first_pdf_var, self.first_print_var)
 
+    def _prepare_ocr_range(self) -> Optional[Tuple[str, int, int]]:
+        """校验/补齐 OCR 页号范围；返回 (pdf_path, start_page, end_page) 或 None(取消)"""
+        pdf_path = self.pdf_var.get().strip()
+        range_text = self.ocr_range_var.get().strip()
+        if (not pdf_path or not os.path.isfile(pdf_path)
+                or not RE_PAGE_RANGE.match(range_text)):
+            ocr_fields = dlg.ask_ocr_args(self.root, self.pdf_var, self.ocr_range_var)
+            if ocr_fields is None:
+                self.logln('已取消：未填写OCR识别信息')
+                return None
+            self.pdf_var.set(ocr_fields[0])
+            self.ocr_range_var.set(ocr_fields[1])
+        try:
+            return self._get_ocr_args()
+        except ValueError as error:
+            raise ValueError(str(error))
+
     def do_ocr(self) -> None:
         try:
-            pdf_path = self.pdf_var.get().strip()
-            range_text = self.ocr_range_var.get().strip()
-            if (not pdf_path or not os.path.isfile(pdf_path)
-                    or not RE_PAGE_RANGE.match(range_text)):
-                ocr_fields = dlg.ask_ocr_args(self.root, self.pdf_var, self.ocr_range_var)
-                if ocr_fields is None:
-                    self.logln('已取消：未填写OCR识别信息')
-                    return
-                self.pdf_var.set(ocr_fields[0])
-                self.ocr_range_var.set(ocr_fields[1])
-            pdf_path, start_page, end_page = self._get_ocr_args()
-            self.logln('加载OCR引擎并识别 PDF页 %d-%d …（首次运行下载模型，约需几分钟）'
+            ocr_args = self._prepare_ocr_range()
+            if ocr_args is None:
+                return
+            pdf_path, start_page, end_page = ocr_args
+            self.logln('加载OCR引擎并识别目录 PDF页 %d-%d …（首次运行下载模型，约需几分钟）'
                        % (start_page, end_page))
             self._task_start('ocr', ocr._mp_ocr_task,
+                             (pdf_path, start_page, end_page,
+                              self._tm.cancel_event, self._tm.pause_event))
+        except Exception as error:
+            self.logln('OCR错误: %s' % error)
+            messagebox.showerror('OCR错误', str(error))
+
+    def do_ocr_text(self) -> None:
+        try:
+            ocr_args = self._prepare_ocr_range()
+            if ocr_args is None:
+                return
+            pdf_path, start_page, end_page = ocr_args
+            self.logln('加载OCR引擎并识别文字 PDF页 %d-%d …（首次运行下载模型，约需几分钟）'
+                       % (start_page, end_page))
+            self._task_start('ocr_text', ocr._mp_ocr_text_task,
                              (pdf_path, start_page, end_page,
                               self._tm.cancel_event, self._tm.pause_event))
         except Exception as error:
@@ -555,10 +621,10 @@ class App:
             self.logln('错误: %s' % error)
             messagebox.showerror('错误', str(error))
 
-    def save_ocr_txt(self) -> None:
+    def _prompt_save_ocr_result(self) -> None:
+        """弹保存对话框保存OCR结果页签内容（默认 PDF同目录 + _目录.txt），可取消"""
         ocr_result_text = self.ocr_text.get('1.0', 'end')
         if not ocr_result_text.strip():
-            messagebox.showwarning('提示', 'OCR结果为空')
             return
         pdf_path = self.pdf_var.get().strip()
         file_base, _extension = os.path.splitext(pdf_path)
@@ -580,6 +646,13 @@ class App:
             messagebox.showerror('错误', '保存失败: %s' % io_error)
             return
         self.logln('已保存: %s' % save_path)
+
+    def save_ocr_txt(self) -> None:
+        ocr_result_text = self.ocr_text.get('1.0', 'end')
+        if not ocr_result_text.strip():
+            messagebox.showwarning('提示', 'OCR结果为空')
+            return
+        self._prompt_save_ocr_result()
 
 
 def main() -> int:

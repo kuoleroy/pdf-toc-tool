@@ -22,7 +22,7 @@ def _print_usage() -> None:
     print('用法:')
     print('  %s extract <pdf> [输出txt]' % os.path.basename(sys.argv[0]))
     print('  %s write <pdf> <目录txt> [偏移(默认15)] [copy|same]' % os.path.basename(sys.argv[0]))
-    print('  %s ocr <pdf> <起始PDF页>-<结束PDF页> [-a] [-o 输出txt]   (OCR目录页，需带OCR版；-a=自动检测偏移并打印)' % os.path.basename(sys.argv[0]))
+    print('  %s ocr <pdf> <起始PDF页>-<结束PDF页> [-a] [-t] [-o 输出txt]   (OCR页面，需带OCR版；-a=自动检测偏移并打印；-t=识别纯文字[正文等任意页])' % os.path.basename(sys.argv[0]))
     print('  %s ebook <电子书> [输出txt]   (提取EPUB/MOBI/AZW3内置目录，页码为阅读顺序号[p序号])' % os.path.basename(sys.argv[0]))
     print('  %s pdfimages <pdf> [输出目录] [-r 分辨率dpi] [-f 格式] [-q 质量]   (提取图片：默认内嵌原样；-r=渲染页面；格式 orig/png/jpeg；-q为JPEG质量)' % os.path.basename(sys.argv[0]))
 
@@ -85,6 +85,7 @@ def main(args: List[str]) -> int:
         start_page, end_page = int(range_match.group(1)), int(range_match.group(2))
         output_path: Optional[str] = None
         detect_offset_flag = False
+        text_mode_flag = False
         arg_index = 3
         while arg_index < len(args):
             if args[arg_index] == '-o' and arg_index + 1 < len(args):
@@ -93,14 +94,22 @@ def main(args: List[str]) -> int:
             elif args[arg_index] == '-a':
                 detect_offset_flag = True
                 arg_index += 1
+            elif args[arg_index] == '-t':
+                text_mode_flag = True
+                arg_index += 1
             else:
                 _print_usage()
                 return 1
         engine = ocr.load_ocr()
         progress_callback = _make_progress_writer()
-        ocr_text = ocr.ocr_to_txt(pdf_path, start_page, end_page, ocr=engine,
-                                  progress=progress_callback)
-        sys.stdout.write('\n')
+        if text_mode_flag:
+            ocr_text = ocr.extract_text(pdf_path, start_page, end_page, ocr=engine,
+                                        progress=progress_callback)
+            sys.stdout.write('\n')
+        else:
+            ocr_text = ocr.ocr_to_txt(pdf_path, start_page, end_page, ocr=engine,
+                                      progress=progress_callback)
+            sys.stdout.write('\n')
         if detect_offset_flag:
             offset, _first_printed_number = ocr.detect_offset(
                 pdf_path, start_page, end_page, ocr=engine,

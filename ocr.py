@@ -77,6 +77,21 @@ def _mp_ocr_task(q, pdf_path, start_page, end_page, cancel_event, pause_event) -
         q.put(('error', type(error).__name__ + ': ' + str(error)))
 
 
+def _mp_ocr_text_task(q, pdf_path, start_page, end_page, cancel_event, pause_event) -> None:
+    """子进程入口：OCR任意页面的纯文字提取，结果经 multiprocessing.Queue 回传
+
+    进度：渲染阶段 0~T，识别阶段 T~2T（T=页数）。结果消息 ('ocr_text_done', text)。
+    """
+    try:
+        engine = load_ocr()
+        text = extract_text(pdf_path, start_page, end_page, ocr=engine,
+                            progress=lambda done, total, message: q.put(('progress', done, total, message)),
+                            cancel_event=cancel_event, pause_event=pause_event)
+        q.put(('ocr_text_done', text))
+    except Exception as error:
+        q.put(('error', type(error).__name__ + ': ' + str(error)))
+
+
 def load_ocr():
     """加载（并缓存）OCR 引擎实例；首次运行自动下载模型，需联网"""
     global _ocr_instances
@@ -330,6 +345,43 @@ def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int
                 output_lines.append('# 缺标题(第%d页): %s' % (
                     page_number, _format_page_number(start_number, end_number)))
     return '\n'.join(output_lines) + '\n'
+
+
+def extract_text(pdf_path: str, start_page: int, end_page: int, ocr=None,
+                 dpi: int = OCR_DPI_DEFAULT, progress: Optional[Callable] = None,
+                 cancel_event=None, pause_event=None) -> str:
+    """OCR任意页码范围(PDF页号) -> 纯文字txt（逐页保留阅读顺序，页首带 [第N页] 标记）
+
+    与 ocr_to_txt 不同：不做目录/页码解析，仅按行输出识别文字，
+    适合识别正文等任意页面。ocr 可传入已加载的引擎实例（load_ocr()）。
+    """
+    if ocr is None:
+        ocr = load_ocr()
+    total_pages = end_page - start_page + 1
+    rendered_images = render_pages(
+        pdf_path, start_page, end_page, dpi, cancel_event, pause_event,
+        progress and (lambda done, total, message: progress(done, 2 * total_pages, message)))
+    if not rendered_images:
+        raise ValueError('页码范围无效：PDF页 %d-%d 不存在' % (start_page, end_page))
+    recognized_lines = _ocr_images(
+        ocr, rendered_images,
+        progress and (lambda done, total, message: progress(total_pages + done, 2 * total_pages, message)),
+        cancel_event, pause_event)
+    output_lines: List[str] = []
+    recognized_pages = sorted({line_page_number for line_page_number, _x, _t, _s in recognized_lines})
+    for page_number in recognized_pages:
+        output_lines.append('')
+        output_lines.append('[第%d页]' % page_number)
+        seen_lines: set = set()
+        for page_number_2, _x, text, _score in recognized_lines:
+            if page_number_2 != page_number:
+                continue
+            page_line = text.strip()
+            # 同页相同文本行只保留首次（OCR偶发重复识别同一行）
+            if page_line and page_line not in seen_lines:
+                seen_lines.add(page_line)
+                output_lines.append(page_line)
+    return '\n'.join(output_lines).strip() + '\n'
 
 
 def detect_offset(pdf_path: str, start_page: int, end_page: int, ocr=None,
