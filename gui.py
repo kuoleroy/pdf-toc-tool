@@ -378,7 +378,7 @@ class App:
             self.ocr_text.insert('1.0', extracted_text)
             self.nb.select(1)
             self.logln('文字识别完成。结果在"OCR结果"页签，可编辑后[保存OCR结果…]。')
-            self._prompt_save_ocr_result()
+            self._notify_ocr_finished()
         elif message_kind == 'ocr_offset':
             self._task_end()
             _kind, offset = message
@@ -386,7 +386,7 @@ class App:
                 self.logln('自动检测：PDF页偏移=%d。写入书签时请在"2.操作"填正文第一页的PDF页号和印刷页码。' % offset)
             else:
                 self.logln('自动检测偏移失败。请在"2.操作"填正文第一页的PDF页号和印刷页码。')
-            self._prompt_save_ocr_result()
+            self._notify_ocr_finished()
         elif message_kind == 'error':
             self._task_end()
             error_message = message[1]
@@ -646,6 +646,11 @@ class App:
             messagebox.showerror('错误', '保存失败: %s' % io_error)
             return
         self.logln('已保存: %s' % save_path)
+
+    def _notify_ocr_finished(self) -> None:
+        """识别完成提示：弹"已完成"框询问是否立即保存，选是才弹保存框"""
+        if messagebox.askyesno('已完成', '识别已完成，是否立即保存结果？'):
+            self._prompt_save_ocr_result()
 
     def save_ocr_txt(self) -> None:
         ocr_result_text = self.ocr_text.get('1.0', 'end')
