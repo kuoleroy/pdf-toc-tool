@@ -22,7 +22,7 @@ def _print_usage() -> None:
     print('用法:')
     print('  %s extract <pdf> [输出txt]' % os.path.basename(sys.argv[0]))
     print('  %s write <pdf> <目录txt> [偏移(默认15)] [copy|same]' % os.path.basename(sys.argv[0]))
-    print('  %s ocr <pdf> <起始PDF页>-<结束PDF页> [-a] [-t] [-o 输出txt]   (OCR页面，需带OCR版；-a=自动检测偏移并打印；-t=识别纯文字[正文等任意页])' % os.path.basename(sys.argv[0]))
+    print('  %s ocr <pdf> <起始PDF页>-<结束PDF页> [-a] [-t] [-o 输出txt]   (OCR页面；-a=自动检测偏移并打印；-t=识别纯文字[正文等任意页])' % os.path.basename(sys.argv[0]))
     print('  %s ebook <电子书> [输出txt]   (提取EPUB/MOBI/AZW3内置目录，页码为阅读顺序号[p序号])' % os.path.basename(sys.argv[0]))
     print('  %s pdfimages <pdf> [输出目录] [-r 分辨率dpi] [-f 格式] [-q 质量]   (提取图片：默认内嵌原样；-r=渲染页面；格式 orig/png/jpeg；-q为JPEG质量)' % os.path.basename(sys.argv[0]))
 

@@ -43,7 +43,7 @@ OCR_PREVIEW_FILE_NAME = '_pdf_toc_ocr_preview.txt'  # 确认写入时的临时�
 class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        root.title('PDF 书签工具 v%s%s' % (VERSION, '（带OCR版）' if ocr.HAS_OCR else ''))
+        root.title('PDF 书签工具 v%s' % VERSION)
         root.geometry('920x780')
         root.minsize(860, 600)
 
@@ -138,25 +138,20 @@ class App:
         # ---- OCR 识别目录页 ----
         ocr_frame = ttk.LabelFrame(root, text='OCR 识别目录页')
         ocr_frame.pack(fill='x', **PADDING)
-        if ocr.HAS_OCR:
-            row_frame = ttk.Frame(ocr_frame)
-            row_frame.pack(fill='x', **PADDING)
-            ttk.Label(row_frame, text='页号范围:').pack(side='left')
-            self.ocr_range_var = tk.StringVar()
-            ttk.Entry(row_frame, textvariable=self.ocr_range_var, width=12).pack(side='left', padx=4)
-            self.btn_ocr = ttk.Button(row_frame, text='识别目录', command=self.do_ocr)
-            self.btn_ocr.pack(side='left', padx=8)
-            self.btn_ocr_text = ttk.Button(row_frame, text='识别文字', command=self.do_ocr_text)
-            self.btn_ocr_text.pack(side='left', padx=8)
-            self.ocr_page_mark_var = tk.BooleanVar(value=False)
-            ttk.Checkbutton(row_frame, text='每页加[第N页]标记',
-                            variable=self.ocr_page_mark_var).pack(side='left', padx=8)
-            self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[识别目录]自动检测偏移；结果可编辑后[确认写入]或[保存OCR结果…]',
-                      wrap=430).pack(side='left', padx=8)
-        else:
-            self.hint(ocr_frame,
-                      'OCR组件未安装：本程序为"不带OCR版"。请下载"带OCR版"exe，或 pip install paddleocr 后运行源码。',
-                      wrap=760).pack(anchor='w', **PADDING)
+        row_frame = ttk.Frame(ocr_frame)
+        row_frame.pack(fill='x', **PADDING)
+        ttk.Label(row_frame, text='页号范围:').pack(side='left')
+        self.ocr_range_var = tk.StringVar()
+        ttk.Entry(row_frame, textvariable=self.ocr_range_var, width=12).pack(side='left', padx=4)
+        self.btn_ocr = ttk.Button(row_frame, text='识别目录', command=self.do_ocr)
+        self.btn_ocr.pack(side='left', padx=8)
+        self.btn_ocr_text = ttk.Button(row_frame, text='识别文字', command=self.do_ocr_text)
+        self.btn_ocr_text.pack(side='left', padx=8)
+        self.ocr_page_mark_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(row_frame, text='每页加[第N页]标记',
+                        variable=self.ocr_page_mark_var).pack(side='left', padx=8)
+        self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[识别目录]自动检测偏移；结果可编辑后[确认写入]或[保存OCR结果…]',
+                  wrap=430).pack(side='left', padx=8)
 
         # 进度条与按钮行放在日志区之前，窗口缩小时不遮挡操作按钮
         progress_frame = ttk.Frame(root)
@@ -311,9 +306,8 @@ class App:
             button.configure(state='disabled')
         self.btn_browse_pdf.configure(state='disabled')
         self.btn_browse_txt.configure(state='disabled')
-        if ocr.HAS_OCR:
-            self.btn_ocr.configure(state='disabled')
-            self.btn_ocr_text.configure(state='disabled')
+        self.btn_ocr.configure(state='disabled')
+        self.btn_ocr_text.configure(state='disabled')
         self._prog_reset()
         self.prog_label.configure(text='启动中…')
         self._tm.start(target, arguments)
@@ -336,9 +330,8 @@ class App:
             button.configure(state='normal')
         self.btn_browse_pdf.configure(state='normal')
         self.btn_browse_txt.configure(state='normal')
-        if ocr.HAS_OCR:
-            self.btn_ocr.configure(state='normal')
-            self.btn_ocr_text.configure(state='normal')
+        self.btn_ocr.configure(state='normal')
+        self.btn_ocr_text.configure(state='normal')
         self.btn_pause.configure(state='disabled')
         self.btn_stop.configure(state='disabled')
         return finished_type

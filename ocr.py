@@ -10,8 +10,8 @@ paddle 3.x CPU 推理存在 oneDNN/PIR 不兼容 bug（每页约 50 秒且无法
   目录条目的行尾数字是"印刷页码"，写入书签时需要偏移量 offset（印刷页p -> PDF索引 = p + offset）。
   detect_offset() 可从目录条目最小页码 + 正文起始页自动推算偏移。
 
-rapidocr 为可选依赖：未安装时 HAS_OCR=False，本模块其余功能不受影响
-（程序整体仍可正常使用，仅 OCR 功能禁用）。
+程序为单一带OCR版本，本模块在运行环境缺少 rapidocr-onnxruntime 时，
+OCR功能调用会抛出清晰错误提示安装依赖，其余功能不受影响。
 """
 import re
 import time
@@ -101,7 +101,7 @@ def load_ocr():
     """加载（并缓存）OCR 引擎实例；首次运行自动下载模型，需联网"""
     global _ocr_instances
     if not HAS_OCR or _POCR_MODULE is None:
-        raise RuntimeError('OCR组件不可用：当前为不带OCR版，请安装 rapidocr-onnxruntime 后重试')
+        raise RuntimeError('OCR组件不可用：缺少依赖，请运行 pip install rapidocr-onnxruntime 后重试')
     key = 'default'
     if key not in _ocr_instances:
         _ocr_instances[key] = _POCR_MODULE()

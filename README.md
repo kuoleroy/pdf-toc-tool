@@ -1,12 +1,11 @@
 # PDF 书签工具（PDF Toc Tool）
 
 为扫描版 PDF 批量提取 / 写入书签（目录）的轻量工具。Python 实现（GUI + CLI），
-基于 [PyMuPDF](https://pymupdf.readthedocs.io/)。提供**两个版本**：
+基于 [PyMuPDF](https://pymupdf.readthedocs.io/)。提供**单一完整版本**：
 
 | 版本 | 说明 | 体积 |
 |---|---|---|
-| **PDFTocTool.exe**（不带OCR） | 手工/AI 生成 txt 目录 → 写书签；PDF → txt 提取 | ~470MB |
-| **PDFTocToolOCR.exe**（带OCR） | 额外支持：扫描目录页自动识别为 txt（识别率有限，仅应急） | ~490MB |
+| **PDFTocTool.exe** | 全部功能：写书签、提取书签/电子书目录、提取图片、扫描目录页 OCR 识别 | ~490MB |
 
 OCR 后端为 [RapidOCR](https://github.com/RapidAI/RapidOCR)（PaddleOCR 模型权重 + onnxruntime 推理），
 首次识别自动下载模型（需联网）。
@@ -21,7 +20,7 @@ OCR 后端为 [RapidOCR](https://github.com/RapidAI/RapidOCR)（PaddleOCR 模型
 - **提取电子书目录**（EPUB / MOBI / AZW3 / PRC）：提取内置目录为 txt（缩进层级 + `[p序号]`，
   序号为目录项在书中的阅读顺序，非页码；EPUB3/EPUB2/新版MOBI均支持，无需额外依赖）
 - **写入书签**：将 txt 目录写入 PDF，兼容两种常见格式（见下）
-- **OCR 识别目录**（带OCR版）：给定扫描目录页的 PDF 页号范围，自动识别为可编辑 txt，
+- **OCR 识别目录**：给定扫描目录页的 PDF 页号范围，自动识别为可编辑 txt，
   支持页码范围（`1-85`）、自动合并被拆散的标题/页码、自动检测页码偏移。
   **识别率有限，仅作应急辅助，推荐优先用"AI 识别 → txt 导入"路线（见下文）**
 - **两种层级来源**：txt 缩进自动定层级；含 `[p页号]` 时直接使用 PDF 页号
@@ -37,7 +36,7 @@ python pdf_toc_tool.py
 
 1. 选择 PDF 或电子书文件（写入模式还需选择目录 txt）
 2. 选择"写入书签"或"提取书签/电子书目录"
-3. 写入模式设置印刷页偏移（默认 15，见"页码偏移"一节；带OCR版可自动检测）
+3. 写入模式设置印刷页偏移（默认 15，见"页码偏移"一节；也可自动检测）
 4. 预览后执行
 
 执行类操作（提取/写入/OCR）都在**后台进程**中运行，界面不卡顿：
@@ -49,7 +48,7 @@ python pdf_toc_tool.py
 电子书没有页码，行尾 `[p序号]` 为目录项在书中出现的顺序号，可方便查看/整理目录；
 若需用于 PDF 写入，请把序号替换为真实 PDF 页号（或改回印刷页码 + 偏移）。
 
-带OCR版还可在"OCR 识别目录页"区域输入扫描目录页的 **PDF 页号**范围（如 `11-16`），
+在"OCR 识别目录页"区域输入扫描目录页的 **PDF 页号**范围（如 `11-16`），
 点"识别目录"后到"OCR结果"页签检查、修改，再点"确认写入"。
 若自动检测偏移失败，可填"正文第一页"的 PDF 页号和印刷页码，点"算偏移"。
 
@@ -57,9 +56,9 @@ python pdf_toc_tool.py
 > **不推荐**直接依赖它。更稳妥的做法：
 > 1. 用 AI 工具（如豆包、通义千问、Kimi 等）上传扫描目录页，让它识别目录并输出 txt；
 > 2. 人工逐行核对页码与标题；
-> 3. 保存为 txt，按"目录 txt 格式"一节整理后，用**不带OCR版**导入写入。
+> 3. 保存为 txt，按"目录 txt 格式"一节整理后，导入写入。
 >
-> 带OCR版仅作为应急辅助，或用于核对 AI 识别结果的页码。
+> 内置 OCR 仅作为应急辅助，或用于核对 AI 识别结果的页码。
 
 ### 命令行
 
@@ -70,7 +69,7 @@ python pdf_toc_tool.py extract <pdf> [输出txt]
 # 写入书签
 python pdf_toc_tool.py write <pdf> <目录txt> [偏移(默认15)] [copy|same]
 
-# OCR 识别目录页（带OCR版；-a 自动检测偏移）
+# OCR 识别目录页（-a 自动检测偏移）
 python pdf_toc_tool.py ocr <pdf> <起始PDF页>-<结束PDF页> [-a] [-o 输出txt]
 
 # 提取电子书内置目录（EPUB/MOBI/AZW3/PRC；[p序号]为阅读顺序号，非页码）
@@ -86,13 +85,9 @@ python pdf_toc_tool.py pdfimages <pdf> [输出目录] [-r 100] [-f jpeg] [-q 80]
 
 ```bash
 pip install pyinstaller
+pip install -r requirements.txt
 
-# 不带OCR版
-pyinstaller --onefile --windowed --noupx --exclude-module rapidocr_onnxruntime --name PDFTocTool pdf_toc_tool.py
-
-# 带OCR版
-pip install -r requirements-ocr.txt
-pyinstaller --onefile --windowed --noupx --collect-all rapidocr_onnxruntime --collect-all onnxruntime --name PDFTocToolOCR pdf_toc_tool.py
+pyinstaller --onefile --windowed --noupx --collect-all rapidocr_onnxruntime --collect-all onnxruntime --name PDFTocTool pdf_toc_tool.py
 ```
 
 详细步骤（含 Python 安装、常见问题、GitHub Actions 自动打包）见 [BUILD.md](BUILD.md)。
@@ -124,7 +119,7 @@ txt 中的页码通常是"印刷页码"，而 PDF 文件（扫描件）开头还
 - 《列宁选集》1972 版第 1–3 卷：offset = 15
 - 第 4 卷：offset = 13（前置页数不同）
 
-带OCR版会尝试自动检测偏移；检测失败时手工计算：
+程序会尝试自动检测偏移；检测失败时手工计算：
 正文第一页的 PDF 索引（PDF页号 − 1）减去该页的印刷页码即为 offset。
 如果 txt 直接使用 `[p页号]` 写法，则不需要偏移。
 

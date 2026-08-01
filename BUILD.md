@@ -2,12 +2,7 @@
 
 本文档写给没有编程环境的用户。按步骤操作，大约 10 分钟。
 
-本工具提供两个版本：
-
-| 版本 | 功能 | 打包命令见 |
-|---|---|---|
-| **PDFTocTool.exe** | 手工 txt 目录 → 写书签；PDF → txt 提取 | 第 3 步 |
-| **PDFTocToolOCR.exe** | 以上全部 + 扫描目录页自动 OCR 识别 | 第 4 步 |
+本工具为**单一带OCR版本**：除基础功能外，内置扫描目录页 OCR 识别（RapidOCR）。
 
 ## 方法一：本机打包（推荐）
 
@@ -32,37 +27,28 @@ pip install pyinstaller
 pip install -r requirements.txt
 ```
 
-### 第 3 步：打包不带OCR版
+### 第 3 步：打包
 
 ```bat
 cd /d %USERPROFILE%\Desktop\pdf-toc-tool
-pyinstaller --onefile --windowed --noupx --exclude-module rapidocr_onnxruntime --name PDFTocTool pdf_toc_tool.py
+pyinstaller --onefile --windowed --noupx --collect-all rapidocr_onnxruntime --collect-all onnxruntime --name PDFTocTool pdf_toc_tool.py
 ```
 
 > `--noupx` 必须保留：Windows 打包机若装有 UPX，PyInstaller 会自动压缩，
 > 压缩后的 exe 会损坏无法运行。
 
-### 第 4 步：打包带OCR版（可选）
-
-```bat
-cd /d %USERPROFILE%\Desktop\pdf-toc-tool
-pip install -r requirements-ocr.txt
-pyinstaller --onefile --windowed --noupx --collect-all rapidocr_onnxruntime --collect-all onnxruntime --name PDFTocToolOCR pdf_toc_tool.py
-```
-
 等待几分钟（出现 `Build complete!` 即完成），成品在 `dist` 文件夹里：
 
 ```text
-dist\PDFTocTool.exe       # 不带OCR版（双击使用）
-dist\PDFTocToolOCR.exe    # 带OCR版（双击使用）
+dist\PDFTocTool.exe       # 完整版（双击使用）
 ```
 
 把 `dist` 里的 exe 复制到任何电脑都能直接运行，**不需要安装 Python**。
-带OCR版首次执行"识别目录"时会自动下载 OCR 模型（需联网）。
+首次执行"识别目录"时会自动下载 OCR 模型（需联网）。
 
 ### 以后改了源码怎么办？
 
-重复"第 3 步"（或第 4 步）。若嫌慢，可去掉 `--onefile`：
+重复"第 3 步"。若嫌慢，可去掉 `--onefile`：
 
 ```bat
 pyinstaller --onedir --windowed --name PDFTocTool pdf_toc_tool.py
@@ -82,7 +68,7 @@ pyinstaller --onedir --windowed --name PDFTocTool pdf_toc_tool.py
    git push origin v1.1.0
    ```
 
-3. 等几分钟，GitHub 会自动打包并在 Releases 页面生成两个 exe 供下载
+3. 等几分钟，GitHub 会自动打包并在 Releases 页面生成 exe 供下载
 
 也可以不推标签，在仓库 Actions 页面手动点 "Run workflow"。
 
@@ -93,7 +79,7 @@ pyinstaller --onedir --windowed --name PDFTocTool pdf_toc_tool.py
 | `python 不是内部或外部命令` | Python 没加入 PATH，重装并勾选 "Add python.exe to PATH" |
 | `pip 不是内部或外部命令` | 同上；或执行 `python -m pip install ...` |
 | 杀毒软件报毒 | PyInstaller 单文件版常见误报，属正常；加白名单或用 `--onedir` 模式 |
-| exe 体积大（约 470MB） | 因为内置了 PyMuPDF 完整库；属正常 |
+| exe 体积大（约 490MB） | 因为内置了 PyMuPDF 与 OCR 模型推理库；属正常 |
 | 打包提示缺 `fitz` | 先执行 `pip install -r requirements.txt` |
 | 下载的 exe 无法运行（报 PKG archive 错误） | 旧版被 UPX 压缩损坏；v1.1.0 起已加 `--noupx`，请用新版本 |
 
