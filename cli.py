@@ -3,13 +3,22 @@
 import os
 import re
 import sys
+from typing import List, Optional
 
 import core
 import ebook
 import ocr
 
+RE_PAGE_RANGE = re.compile(r'^(\d+)[-—–](\d+)$')
 
-def _print_usage():
+DEFAULT_OFFSET = 15
+DEFAULT_JPEG_QUALITY = 85
+DEFAULT_IMAGE_FORMAT = 'orig'
+DEFAULT_EXTRACT_SUFFIX = '_书签.txt'
+DEFAULT_BOOK_TXT_SUFFIX = '_目录.txt'
+
+
+def _print_usage() -> None:
     print('用法:')
     print('  %s extract <pdf> [输出txt]' % os.path.basename(sys.argv[0]))
     print('  %s write <pdf> <目录txt> [偏移(默认15)] [copy|same]' % os.path.basename(sys.argv[0]))
@@ -18,105 +27,145 @@ def _print_usage():
     print('  %s pdfimages <pdf> [输出目录] [-r 分辨率dpi] [-f 格式] [-q 质量]   (提取图片：默认内嵌原样；-r=渲染页面；格式 orig/png/jpeg；-q为JPEG质量)' % os.path.basename(sys.argv[0]))
 
 
-def main(args):
+def _make_progress_writer():
+    """构造回写当前行的进度回调（\r 覆盖，适合控制台进度显示）"""
+    def write_progress(done, total, message) -> None:
+        sys.stdout.write('\r%d/%d  %s   ' % (done, total, message))
+    return write_progress
+
+
+def _write_text_file(output_path: str, content: str) -> None:
+    """写入 UTF-8 BOM 文本文件，区分 IO 异常类型"""
+    try:
+        with open(output_path, 'w', encoding='utf-8-sig') as output_file:
+            output_file.write(content)
+    except OSError as io_error:
+        raise OSError('写入文件失败 %s: %s' % (output_path, io_error))
+
+
+def main(args: List[str]) -> int:
+    """CLI 分发：extract / write / ocr / ebook / pdfimages"""
     if not args:
         _print_usage()
         return 1
-    cmd = args[0]
-    if cmd == 'extract' and len(args) >= 2:
-        pdf = args[1]
-        out = args[2] if len(args) > 2 else os.path.splitext(pdf)[0] + '_书签.txt'
-        toc = core.read_toc(pdf)
-        if not toc:
+    command = args[0]
+
+    if command == 'extract' and len(args) >= 2:
+        pdf_path = args[1]
+        output_path = args[2] if len(args) > 2 \
+            else os.path.splitext(pdf_path)[0] + DEFAULT_EXTRACT_SUFFIX
+        toc_entries = core.read_toc(pdf_path)
+        if not toc_entries:
             print('该PDF没有书签。')
             return 1
-        core.export_toc_txt(toc, out)
-        print('提取 %d 条书签 -> %s' % (len(toc), out))
+        core.export_toc_txt(toc_entries, output_path)
+        print('提取 %d 条书签 -> %s' % (len(toc_entries), output_path))
         return 0
-    if cmd == 'write' and len(args) >= 3:
-        pdf, txt = args[1], args[2]
-        offset = int(args[3]) if len(args) > 3 else 15
-        mode = args[4] if len(args) > 4 else 'copy'
-        entries = core.levels_from_indent(core.parse_toc(txt))
-        toc = core.build_toc(entries, offset)
-        out = core.write_toc(pdf, toc, mode)
-        print('写入 %d 条书签 -> %s' % (len(toc), out))
+
+    if command == 'write' and len(args) >= 3:
+        pdf_path, toc_txt_path = args[1], args[2]
+        try:
+            offset = int(args[3]) if len(args) > 3 else DEFAULT_OFFSET
+        except ValueError:
+            print('偏移必须是整数: %s' % args[3])
+            return 1
+        output_mode = args[4] if len(args) > 4 else 'copy'
+        parsed_entries = core.levels_from_indent(core.parse_toc(toc_txt_path))
+        toc_entries = core.build_toc(parsed_entries, offset)
+        output_path = core.write_toc(pdf_path, toc_entries, output_mode)
+        print('写入 %d 条书签 -> %s' % (len(toc_entries), output_path))
         return 0
-    if cmd == 'ocr' and len(args) >= 3:
-        pdf = args[1]
-        m = re.match(r'^(\d+)[-—–](\d+)$', args[2])
-        if not m:
+
+    if command == 'ocr' and len(args) >= 3:
+        pdf_path = args[1]
+        range_match = RE_PAGE_RANGE.match(args[2])
+        if not range_match:
             _print_usage()
             return 1
-        start, end = int(m.group(1)), int(m.group(2))
-        out_path = None
-        detect = False
-        i = 3
-        while i < len(args):
-            if args[i] == '-o' and i + 1 < len(args):
-                out_path = args[i + 1]
-                i += 2
-            elif args[i] == '-a':
-                detect = True
-                i += 1
+        start_page, end_page = int(range_match.group(1)), int(range_match.group(2))
+        output_path: Optional[str] = None
+        detect_offset_flag = False
+        arg_index = 3
+        while arg_index < len(args):
+            if args[arg_index] == '-o' and arg_index + 1 < len(args):
+                output_path = args[arg_index + 1]
+                arg_index += 2
+            elif args[arg_index] == '-a':
+                detect_offset_flag = True
+                arg_index += 1
             else:
                 _print_usage()
                 return 1
         engine = ocr.load_ocr()
-        prog = lambda d, t, m: sys.stdout.write('\rOCR %d/%d  %s   ' % (d, t, m))
-        txt = ocr.ocr_to_txt(pdf, start, end, ocr=engine, progress=prog)
+        progress_callback = _make_progress_writer()
+        ocr_text = ocr.ocr_to_txt(pdf_path, start_page, end_page, ocr=engine,
+                                  progress=progress_callback)
         sys.stdout.write('\n')
-        if detect:
-            offset, n0 = ocr.detect_offset(pdf, start, end, ocr=engine,
-                                           progress=prog, skip_first=True)
+        if detect_offset_flag:
+            offset, _first_printed_number = ocr.detect_offset(
+                pdf_path, start_page, end_page, ocr=engine,
+                progress=progress_callback, skip_first=True)
             sys.stdout.write('\n')
             if offset is not None:
                 print('自动检测：PDF页偏移=%d' % offset)
             else:
                 print('自动检测偏移失败，请手动计算偏移（正文第一页PDF索引 - 印刷页码）。')
-        if out_path:
-            with open(out_path, 'w', encoding='utf-8-sig') as f:
-                f.write(txt)
-            print('OCR完成 -> %s' % out_path)
+        if output_path:
+            _write_text_file(output_path, ocr_text)
+            print('OCR完成 -> %s' % output_path)
         else:
-            print(txt)
+            print(ocr_text)
         return 0
-    if cmd == 'ebook' and len(args) >= 2:
-        book = args[1]
-        out = args[2] if len(args) > 2 else os.path.splitext(book)[0] + '_目录.txt'
-        entries = ebook.extract_toc(book)
-        txt = ebook.to_txt(entries)
-        with open(out, 'w', encoding='utf-8-sig') as f:
-            f.write(txt)
-        print('提取 %d 条目录（[p序号]为阅读顺序号，非页码） -> %s' % (len(entries), out))
+
+    if command == 'ebook' and len(args) >= 2:
+        book_path = args[1]
+        output_path = args[2] if len(args) > 2 \
+            else os.path.splitext(book_path)[0] + DEFAULT_BOOK_TXT_SUFFIX
+        toc_entries = ebook.extract_toc(book_path)
+        toc_text = ebook.to_txt(toc_entries)
+        _write_text_file(output_path, toc_text)
+        print('提取 %d 条目录（[p序号]为阅读顺序号，非页码） -> %s' % (len(toc_entries), output_path))
         return 0
-    if cmd == 'pdfimages' and len(args) >= 2:
-        pdf = args[1]
-        out_dir = None
-        dpi = None
-        fmt = 'orig'
-        quality = 85
-        i = 2
-        while i < len(args):
-            if args[i] == '-r' and i + 1 < len(args):
-                dpi = int(args[i + 1])
-                i += 2
-            elif args[i] == '-f' and i + 1 < len(args):
-                fmt = args[i + 1].lower()
-                i += 2
-            elif args[i] == '-q' and i + 1 < len(args):
-                quality = int(args[i + 1])
-                i += 2
-            elif out_dir is None:
-                out_dir = args[i]
-                i += 1
+
+    if command == 'pdfimages' and len(args) >= 2:
+        pdf_path = args[1]
+        output_dir: Optional[str] = None
+        render_dpi: Optional[int] = None
+        image_format = DEFAULT_IMAGE_FORMAT
+        jpeg_quality = DEFAULT_JPEG_QUALITY
+        arg_index = 2
+        while arg_index < len(args):
+            if args[arg_index] == '-r' and arg_index + 1 < len(args):
+                try:
+                    render_dpi = int(args[arg_index + 1])
+                except ValueError:
+                    print('分辨率必须是整数: %s' % args[arg_index + 1])
+                    return 1
+                arg_index += 2
+            elif args[arg_index] == '-f' and arg_index + 1 < len(args):
+                image_format = args[arg_index + 1].lower()
+                arg_index += 2
+            elif args[arg_index] == '-q' and arg_index + 1 < len(args):
+                try:
+                    jpeg_quality = int(args[arg_index + 1])
+                except ValueError:
+                    print('质量必须是整数: %s' % args[arg_index + 1])
+                    return 1
+                arg_index += 2
+            elif output_dir is None:
+                output_dir = args[arg_index]
+                arg_index += 1
             else:
                 _print_usage()
                 return 1
-        prog = lambda d, t, m: sys.stdout.write('\r提取 %d/%d  %s   ' % (d, t, m))
-        out_dir, count = core.extract_images(pdf, out_dir, dpi, fmt, quality, progress=prog)
+        progress_callback = _make_progress_writer()
+        output_dir, image_count = core.extract_images(
+            pdf_path, output_dir, render_dpi, image_format, jpeg_quality,
+            progress=progress_callback)
         sys.stdout.write('\n')
-        print('提取 %d 张%s（%s） -> %s' % (count, '页面' if dpi else '图片', fmt, out_dir))
+        print('提取 %d 张%s（%s） -> %s' % (image_count, '页面' if render_dpi else '图片',
+                                       image_format, output_dir))
         return 0
+
     _print_usage()
     return 1

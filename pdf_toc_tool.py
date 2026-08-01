@@ -4,7 +4,8 @@ import multiprocessing
 import sys
 
 
-def main():
+def main() -> int:
+    """程序入口：冻结支持（打包exe多进程必需），按参数分发 CLI/GUI"""
     multiprocessing.freeze_support()
     if len(sys.argv) > 1:
         import cli

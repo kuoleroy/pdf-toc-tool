@@ -1,115 +1,140 @@
 # -*- coding: utf-8 -*-
-"""对话框组件"""
+"""对话框组件：模态输入弹框"""
 import os
+import re
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, ttk
+from typing import Optional, Tuple
 
 
-def ask_offset_fields(parent, first_pdf_var, first_print_var):
-    """弹框要求填写正文第一页的PDF页号和印刷页码；返回 (pdf_no, print_no) 或 None(取消)"""
-    top = tk.Toplevel(parent)
-    top.title('填写偏移信息（必填）')
-    top.transient(parent)
-    top.grab_set()
-    top.resizable(False, False)
-    tk.Label(top, text='为防止书签页码错位，请填写正文第一页（目录后第一个正文页）的信息:',
+def ask_offset_fields(parent: tk.Tk, first_pdf_page_var: tk.StringVar,
+                      first_printed_page_var: tk.StringVar) -> Optional[Tuple[int, int]]:
+    """弹框要求填写正文第一页的PDF页号和印刷页码（用于计算偏移量）。
+
+    返回 (pdf_page_number, printed_page_number)；取消返回 None。
+    边界情况：输入非法时在弹框内提示，不关闭弹框。
+    """
+    dialog = tk.Toplevel(parent)
+    dialog.title('填写偏移信息（必填）')
+    dialog.transient(parent)
+    dialog.grab_set()
+    dialog.resizable(False, False)
+
+    tk.Label(dialog, text='为防止书签页码错位，请填写正文第一页（目录后第一个正文页）的信息:',
              anchor='w').pack(fill='x', padx=12, pady=(10, 4))
-    row = tk.Frame(top)
-    row.pack(padx=12, pady=4)
-    tk.Label(row, text='PDF页号:').pack(side='left')
-    v1 = tk.StringVar(value=first_pdf_var.get())
-    tk.Entry(row, textvariable=v1, width=6).pack(side='left', padx=4)
-    tk.Label(row, text='印刷页码:').pack(side='left')
-    v2 = tk.StringVar(value=first_print_var.get())
-    tk.Entry(row, textvariable=v2, width=6).pack(side='left', padx=4)
-    tk.Label(top, text='印刷页码 = 该页正文右下角印的数字（如 1）。',
-             fg='gray').pack(anchor='w', padx=12)
-    err = tk.Label(top, text='', fg='red')
-    err.pack(padx=12, anchor='w')
-    result = {}
 
-    def ok():
+    input_row = tk.Frame(dialog)
+    input_row.pack(padx=12, pady=4)
+    tk.Label(input_row, text='PDF页号:').pack(side='left')
+    pdf_page_var = tk.StringVar(value=first_pdf_page_var.get())
+    tk.Entry(input_row, textvariable=pdf_page_var, width=6).pack(side='left', padx=4)
+    tk.Label(input_row, text='印刷页码:').pack(side='left')
+    printed_page_var = tk.StringVar(value=first_printed_page_var.get())
+    tk.Entry(input_row, textvariable=printed_page_var, width=6).pack(side='left', padx=4)
+
+    tk.Label(dialog, text='印刷页码 = 该页正文右下角印的数字（如 1）。',
+             fg='gray').pack(anchor='w', padx=12)
+    error_label = tk.Label(dialog, text='', fg='red')
+    error_label.pack(padx=12, anchor='w')
+
+    dialog_result = {}
+
+    def on_confirm() -> None:
         try:
-            p1, p2 = int(v1.get().strip()), int(v2.get().strip())
-            if p1 < 1 or p2 < 1:
+            pdf_page_number = int(pdf_page_var.get().strip())
+            printed_page_number = int(printed_page_var.get().strip())
+            if pdf_page_number < 1 or printed_page_number < 1:
                 raise ValueError
         except ValueError:
-            err.configure(text='请输入有效的正整数')
+            error_label.configure(text='请输入有效的正整数')
             return
-        result['ok'] = (p1, p2)
-        top.destroy()
+        dialog_result['value'] = (pdf_page_number, printed_page_number)
+        dialog.destroy()
 
-    def cancel():
-        result['ok'] = None
-        top.destroy()
+    def on_cancel() -> None:
+        dialog_result['value'] = None
+        dialog.destroy()
 
-    row2 = tk.Frame(top)
-    row2.pack(padx=12, pady=8)
-    tk.Button(row2, text='确定', command=ok, width=10).pack(side='left', padx=4)
-    tk.Button(row2, text='取消', command=cancel, width=10).pack(side='left', padx=4)
-    top.update_idletasks()
-    top.geometry('+%d+%d' % (parent.winfo_rootx() + 40, parent.winfo_rooty() + 120))
-    row.winfo_children()[1].focus_set()
-    parent.wait_window(top)
-    return result.get('ok')
+    button_row = tk.Frame(dialog)
+    button_row.pack(padx=12, pady=8)
+    tk.Button(button_row, text='确定', command=on_confirm, width=10).pack(side='left', padx=4)
+    tk.Button(button_row, text='取消', command=on_cancel, width=10).pack(side='left', padx=4)
+
+    dialog.update_idletasks()
+    dialog.geometry('+%d+%d' % (parent.winfo_rootx() + 40, parent.winfo_rooty() + 120))
+    input_row.winfo_children()[1].focus_set()
+    parent.wait_window(dialog)
+    return dialog_result.get('value')
 
 
-def ask_ocr_args(parent, pdf_var, range_var):
-    """弹框选择PDF并填写目录页范围；返回 (pdf_path, range_text) 或 None(取消)"""
-    top = tk.Toplevel(parent)
-    top.title('填写OCR识别信息（必填）')
-    top.transient(parent)
-    top.grab_set()
-    top.resizable(False, False)
-    tk.Label(top, text='请选择PDF文件并填写目录页的PDF页号范围:',
+def ask_ocr_args(parent: tk.Tk, pdf_path_var: tk.StringVar,
+                 ocr_range_var: tk.StringVar) -> Optional[Tuple[str, str]]:
+    """弹框选择PDF文件并填写目录页的PDF页号范围（如 11-16）。
+
+    返回 (pdf_path, range_text)；取消返回 None。
+    边界情况：PDF 不存在或范围格式非法时在弹框内提示，不关闭弹框。
+    """
+    dialog = tk.Toplevel(parent)
+    dialog.title('填写OCR识别信息（必填）')
+    dialog.transient(parent)
+    dialog.grab_set()
+    dialog.resizable(False, False)
+
+    tk.Label(dialog, text='请选择PDF文件并填写目录页的PDF页号范围:',
              anchor='w').pack(fill='x', padx=12, pady=(10, 4))
-    row = tk.Frame(top)
-    row.pack(fill='x', padx=12, pady=4)
-    tk.Label(row, text='PDF文件:').pack(side='left')
-    v1 = tk.StringVar(value=pdf_var.get())
-    tk.Entry(row, textvariable=v1, width=40).pack(side='left', fill='x', expand=True, padx=4)
 
-    def browse():
-        p = filedialog.askopenfilename(
+    file_row = tk.Frame(dialog)
+    file_row.pack(fill='x', padx=12, pady=4)
+    tk.Label(file_row, text='PDF文件:').pack(side='left')
+    pdf_path_input_var = tk.StringVar(value=pdf_path_var.get())
+    tk.Entry(file_row, textvariable=pdf_path_input_var, width=40).pack(
+        side='left', fill='x', expand=True, padx=4)
+
+    def on_browse() -> None:
+        selected_path = filedialog.askopenfilename(
             title='选择PDF文件',
             filetypes=[('PDF/电子书', '*.pdf *.epub *.mobi *.azw3 *.prc'), ('全部', '*.*')],
-            parent=top)
-        if p:
-            v1.set(p)
+            parent=dialog)
+        if selected_path:
+            pdf_path_input_var.set(selected_path)
 
-    tk.Button(row, text='浏览…', command=browse).pack(side='left')
-    row2 = tk.Frame(top)
-    row2.pack(padx=12, pady=4)
-    tk.Label(row2, text='目录页PDF页号:').pack(side='left')
-    v2 = tk.StringVar(value=range_var.get())
-    tk.Entry(row2, textvariable=v2, width=12).pack(side='left', padx=4)
-    tk.Label(row2, text='如 11-16（目录页在PDF中的页号）', fg='gray').pack(side='left')
-    err = tk.Label(top, text='', fg='red')
-    err.pack(padx=12, anchor='w')
-    result = {}
+    tk.Button(file_row, text='浏览…', command=on_browse).pack(side='left')
 
-    def ok():
-        p = v1.get().strip()
-        r = v2.get().strip()
-        if not p or not os.path.isfile(p):
-            err.configure(text='请选择有效的PDF文件')
+    range_row = tk.Frame(dialog)
+    range_row.pack(padx=12, pady=4)
+    tk.Label(range_row, text='目录页PDF页号:').pack(side='left')
+    range_input_var = tk.StringVar(value=ocr_range_var.get())
+    tk.Entry(range_row, textvariable=range_input_var, width=12).pack(side='left', padx=4)
+    tk.Label(range_row, text='如 11-16（目录页在PDF中的页号）', fg='gray').pack(side='left')
+
+    error_label = tk.Label(dialog, text='', fg='red')
+    error_label.pack(padx=12, anchor='w')
+
+    PAGE_RANGE_PATTERN = re.compile(r'^\s*\d+\s*[-—–]\s*\d+\s*$')
+    dialog_result = {}
+
+    def on_confirm() -> None:
+        pdf_path = pdf_path_input_var.get().strip()
+        range_text = range_input_var.get().strip()
+        if not pdf_path or not os.path.isfile(pdf_path):
+            error_label.configure(text='请选择有效的PDF文件')
             return
-        import re
-        if not re.match(r'^\s*\d+\s*[-—–]\s*\d+\s*$', r):
-            err.configure(text='请填写目录页PDF页号范围，如 11-16')
+        if not PAGE_RANGE_PATTERN.match(range_text):
+            error_label.configure(text='请填写目录页PDF页号范围，如 11-16')
             return
-        result['ok'] = (p, r)
-        top.destroy()
+        dialog_result['value'] = (pdf_path, range_text)
+        dialog.destroy()
 
-    def cancel():
-        result['ok'] = None
-        top.destroy()
+    def on_cancel() -> None:
+        dialog_result['value'] = None
+        dialog.destroy()
 
-    row3 = tk.Frame(top)
-    row3.pack(padx=12, pady=8)
-    tk.Button(row3, text='确定', command=ok, width=10).pack(side='left', padx=4)
-    tk.Button(row3, text='取消', command=cancel, width=10).pack(side='left', padx=4)
-    top.update_idletasks()
-    top.geometry('+%d+%d' % (parent.winfo_rootx() + 40, parent.winfo_rooty() + 120))
-    top.wait_window(top)
-    return result.get('ok')
+    button_row = tk.Frame(dialog)
+    button_row.pack(padx=12, pady=8)
+    tk.Button(button_row, text='确定', command=on_confirm, width=10).pack(side='left', padx=4)
+    tk.Button(button_row, text='取消', command=on_cancel, width=10).pack(side='left', padx=4)
+
+    dialog.update_idletasks()
+    dialog.geometry('+%d+%d' % (parent.winfo_rootx() + 40, parent.winfo_rooty() + 120))
+    dialog.wait_window(dialog)
+    return dialog_result.get('value')
