@@ -52,6 +52,7 @@ class App:
         self._watchdog_id = None
         self._paused = False
         self._has_progress = False
+        self._last_ocr_type: Optional[str] = None  # 最近一次OCR类型: 'toc'目录 / 'text'文字
 
         # ---- 1. 选择文件 ----
         file_frame = ttk.LabelFrame(root, text='1. 选择文件')
@@ -142,6 +143,9 @@ class App:
             self.btn_ocr.pack(side='left', padx=8)
             self.btn_ocr_text = ttk.Button(row_frame, text='识别文字', command=self.do_ocr_text)
             self.btn_ocr_text.pack(side='left', padx=8)
+            self.ocr_page_mark_var = tk.BooleanVar(value=False)
+            ttk.Checkbutton(row_frame, text='每页加[第N页]标记',
+                            variable=self.ocr_page_mark_var).pack(side='left', padx=8)
             self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[识别目录]自动检测偏移；结果可编辑后[确认写入]或[保存OCR结果…]',
                       wrap=430).pack(side='left', padx=8)
         else:
@@ -600,6 +604,7 @@ class App:
             if ocr_args is None:
                 return
             pdf_path, start_page, end_page = ocr_args
+            self._last_ocr_type = 'toc'
             self.logln('加载OCR引擎并识别目录 PDF页 %d-%d …（首次运行下载模型，约需几分钟）'
                        % (start_page, end_page))
             self._task_start('ocr', ocr._mp_ocr_task,
@@ -615,11 +620,13 @@ class App:
             if ocr_args is None:
                 return
             pdf_path, start_page, end_page = ocr_args
+            self._last_ocr_type = 'text'
             self.logln('加载OCR引擎并识别文字 PDF页 %d-%d …（首次运行下载模型，约需几分钟）'
                        % (start_page, end_page))
             self._task_start('ocr_text', ocr._mp_ocr_text_task,
                              (pdf_path, start_page, end_page,
-                              self._tm.cancel_event, self._tm.pause_event))
+                              self._tm.cancel_event, self._tm.pause_event,
+                              self.ocr_page_mark_var.get()))
         except Exception as error:
             self.logln('OCR错误: %s' % error)
             messagebox.showerror('OCR错误', str(error))
@@ -675,7 +682,7 @@ class App:
             messagebox.showerror('错误', str(error))
 
     def _prompt_save_ocr_result(self) -> None:
-        """弹保存对话框保存OCR结果页签内容（默认 PDF同目录 + _目录.txt），可取消"""
+        """弹保存对话框保存OCR结果页签内容（默认 PDF同目录，目录识别 _目录.txt / 文字识别 _文字.txt）"""
         ocr_result_text = self.ocr_text.get('1.0', 'end')
         if not ocr_result_text.strip():
             return
@@ -683,12 +690,13 @@ class App:
         file_base, _extension = os.path.splitext(pdf_path)
         if not file_base:
             file_base = 'OCR结果'
+        default_suffix = '_文字.txt' if self._last_ocr_type == 'text' else '_目录.txt'
         save_path = filedialog.asksaveasfilename(
             title='保存OCR结果',
             defaultextension='.txt',
             filetypes=[('文本', '*.txt')],
             initialdir=os.path.dirname(pdf_path) or None,
-            initialfile=os.path.basename(file_base) + '_目录.txt')
+            initialfile=os.path.basename(file_base) + default_suffix)
         if not save_path:
             return
         try:
