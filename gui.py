@@ -8,6 +8,8 @@ from tkinter import filedialog, messagebox, ttk
 
 import fitz
 
+from core import (DPI_MAX, DPI_MIN, JPEG_QUALITY_MAX, JPEG_QUALITY_MIN,
+                  IMAGE_OUTPUT_SUFFIX)
 import core
 import dlg
 import ebook
@@ -30,11 +32,7 @@ RE_PAGE_RANGE = re.compile(r'^\s*(\d+)\s*[-—–]\s*(\d+)\s*$')
 RE_IMAGE_PAGE_RANGE = re.compile(r'^\s*(\d+)\s*(?:[-—–]\s*(\d+))?\s*$')
 PDF_EXTENSIONS = {'.pdf', '.epub', '.mobi', '.azw3', '.prc', '.azw'}
 TXT_EXTENSION = '.txt'
-DPI_MIN = 1
-DPI_MAX = 1000
 DEFAULT_JPEG_QUALITY = 85
-JPEG_QUALITY_MIN = 1
-JPEG_QUALITY_MAX = 100
 LOG_PREVIEW_COUNT = 20       # 日志区预览的最大条数
 WATCHDOG_INTERVAL_MS = 4000  # 长时间无进度时的提示更新间隔
 POLL_INTERVAL_MS = 100       # 消息队列轮询间隔

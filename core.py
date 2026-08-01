@@ -16,6 +16,8 @@ OUTPUT_COPY_SUFFIX = '_带目录'    # 副本文件名后缀
 IMAGE_OUTPUT_SUFFIX = '_图片'     # 图片输出目录后缀
 JPEG_QUALITY_MIN = 1
 JPEG_QUALITY_MAX = 100
+DPI_MIN = 1
+DPI_MAX = 1000
 IMAGE_FORMATS = frozenset({'orig', 'png', 'jpeg'})
 EXTENSION_BY_FORMAT = {'png': 'png', 'jpeg': 'jpg', 'orig': ''}
 
@@ -242,6 +244,8 @@ def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[i
         raise ValueError('不支持的图片格式: %s（支持 %s）' % (fmt, '/'.join(sorted(IMAGE_FORMATS))))
     if fmt == 'orig' and dpi:
         fmt = 'png'
+    if dpi is not None and not (DPI_MIN <= dpi <= DPI_MAX):
+        raise ValueError('分辨率dpi应在 %d-%d 之间' % (DPI_MIN, DPI_MAX))
     if not (JPEG_QUALITY_MIN <= quality <= JPEG_QUALITY_MAX):
         raise ValueError('JPEG质量应在 %d-%d 之间' % (JPEG_QUALITY_MIN, JPEG_QUALITY_MAX))
     if start_page is not None and start_page < 1:
