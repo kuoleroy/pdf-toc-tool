@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import time
+import zipfile
 from typing import Callable, List, Optional, Tuple
 
 import fitz
@@ -20,6 +21,9 @@ DPI_MIN = 1
 DPI_MAX = 1000
 IMAGE_FORMATS = frozenset({'orig', 'png', 'jpeg'})
 EXTENSION_BY_FORMAT = {'png': 'png', 'jpeg': 'jpg', 'orig': ''}
+EPUB_EXTENSION = '.epub'         # EPUB内嵌图片走zip解压提取（HTML/SVG引用的位图）
+IMAGE_FILE_EXTENSIONS = frozenset({'.jpg', '.jpeg', '.png', '.gif', '.webp',
+                                   '.bmp', '.svg', '.tif', '.tiff'})
 
 KIND_PDF_PAGE = 'pdf'      # 页码类型：直接PDF页号 [pN]
 KIND_PRINT_PAGE = 'print'  # 页码类型：印刷页码（写入时需加偏移）
@@ -231,13 +235,15 @@ def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[i
                    cancel_event=None, pause_event=None,
                    start_page: Optional[int] = None, end_page: Optional[int] = None
                    ) -> Tuple[str, int]:
-    """提取PDF图片 -> (输出目录, 图片数)
+    """提取文件图片 -> (输出目录, 图片数)
 
     - dpi=None：提取内嵌图片（fmt='orig' 原样保存，或转 png/jpeg）
     - dpi=整数：按分辨率渲染每页为图片（fmt: png/jpeg，默认 png）
     - quality：JPEG质量(1-100)；progress(done, total, msg)：进度回调
     - cancel_event/pause_event：threading.Event，支持停止/暂停（页间生效）
-    - start_page/end_page：限定提取的PDF页号范围（1-based，含边界），None=全部
+    - start_page/end_page：限定提取的页号范围（1-based，含边界），None=全部
+    - EPUB 内嵌模式（dpi=None）：解压zip提取图片文件，仅支持orig原样，忽略页号范围
+    - EPUB/MOBI 渲染模式（dpi=整数）：按页渲染（受文件格式支持程度限制）
     """
     fmt = (fmt or 'orig').lower()
     if fmt not in IMAGE_FORMATS:
@@ -256,7 +262,17 @@ def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[i
         base_name, _ = os.path.splitext(pdf_path)
         out_dir = base_name + IMAGE_OUTPUT_SUFFIX
     os.makedirs(out_dir, exist_ok=True)
-    doc = fitz.open(pdf_path)
+    file_ext = os.path.splitext(pdf_path)[1].lower()
+    if file_ext == EPUB_EXTENSION and not dpi:
+        if fmt != 'orig':
+            raise ValueError('EPUB内嵌提取仅支持原样保存（格式orig）')
+        image_count = _export_epub_images(pdf_path, out_dir, progress,
+                                          cancel_event, pause_event)
+        return out_dir, image_count
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception as error:
+        raise ValueError('无法打开文件: %s（%s）' % (os.path.basename(pdf_path), error))
     try:
         if dpi:
             image_count = _export_rendered_pages(doc, out_dir, dpi, fmt, quality,
@@ -269,6 +285,47 @@ def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[i
     finally:
         doc.close()
     return out_dir, image_count
+
+
+def _dedupe_output_name(base_name: str, saved_names: set) -> str:
+    """输出文件名去重：同名加 _2/_3 后缀，返回可用名并登记"""
+    if base_name not in saved_names:
+        saved_names.add(base_name)
+        return base_name
+    stem, extension = os.path.splitext(base_name)
+    index = 2
+    while True:
+        candidate = '%s_%d%s' % (stem, index, extension)
+        if candidate not in saved_names:
+            saved_names.add(candidate)
+            return candidate
+        index += 1
+
+
+def _export_epub_images(epub_path: str, out_dir: str, progress: Optional[Callable],
+                        cancel_event, pause_event) -> int:
+    """EPUB：解压zip中的图片文件（HTML/SVG引用的位图）原样保存，返回导出数"""
+    try:
+        zip_file = zipfile.ZipFile(epub_path)
+    except zipfile.BadZipFile:
+        raise ValueError('无法打开文件: %s（不是有效的EPUB压缩包）'
+                         % os.path.basename(epub_path))
+    saved_names = set()
+    exported_count = 0
+    with zip_file:
+        image_names = [name for name in zip_file.namelist()
+                       if os.path.splitext(name)[1].lower() in IMAGE_FILE_EXTENSIONS]
+        total_count = len(image_names)
+        for index, name in enumerate(image_names):
+            check_task(cancel_event, pause_event)
+            output_name = _dedupe_output_name(os.path.basename(name), saved_names)
+            with zip_file.open(name) as source_file:
+                with open(os.path.join(out_dir, output_name), 'wb') as target_file:
+                    shutil.copyfileobj(source_file, target_file)
+            exported_count += 1
+            if progress:
+                progress(index + 1, total_count, '提取图片 %d/%d' % (index + 1, total_count))
+    return exported_count
 
 
 def _resolve_page_range(doc, start_page: Optional[int], end_page: Optional[int]

@@ -493,34 +493,42 @@ class App:
             messagebox.showerror('错误', str(error))
 
     def do_images(self) -> None:
-        pdf_path = self.pdf_var.get().strip()
-        if not pdf_path:
-            raise ValueError('请选择PDF文件')
-        if not os.path.isfile(pdf_path):
-            raise ValueError('PDF文件不存在: %s' % pdf_path)
+        source_path = self.pdf_var.get().strip()
+        if not source_path:
+            raise ValueError('请选择文件')
+        if not os.path.isfile(source_path):
+            raise ValueError('文件不存在: %s' % source_path)
         resolution_text = self.resolution_var.get().strip()
         render_dpi = None if resolution_text == IMAGE_INLINE_OPTION else int(resolution_text)
         image_format = self.fmt_var.get().strip().lower() or 'orig'
         jpeg_quality = JPEG_QUALITY_DEFAULT
         # 页号范围：空=全部页；"12-30"=区间；"12"=单页
         page_range = self._parse_image_page_range()
-        # 自动确定并创建保存目录（PDF同目录 "<书名>_图片"），弹确认框显示路径；
+        # EPUB内嵌提取：仅支持orig原样保存，且无"页"概念，忽略页号范围
+        if os.path.splitext(source_path)[1].lower() == core.EPUB_EXTENSION and not render_dpi:
+            if image_format != 'orig':
+                self.logln('提示: EPUB内嵌提取仅支持原样保存，格式已改为orig')
+                image_format = 'orig'
+            if page_range is not None:
+                self.logln('提示: EPUB内嵌提取不支持页号范围，将提取全部图片')
+                page_range = None
+        # 自动确定并创建保存目录（文件同目录 "<书名>_图片"），弹确认框显示路径；
         # 不用 askdirectory：它只能选已有目录，无法预填程序新建的目录
-        default_dir_name = os.path.splitext(os.path.basename(pdf_path))[0] \
+        default_dir_name = os.path.splitext(os.path.basename(source_path))[0] \
             + core.IMAGE_OUTPUT_SUFFIX
-        output_dir = os.path.join(os.path.dirname(pdf_path) or '.', default_dir_name)
+        output_dir = os.path.join(os.path.dirname(source_path) or '.', default_dir_name)
         os.makedirs(output_dir, exist_ok=True)
         if not messagebox.askyesno(
                 '确认保存位置',
                 '图片将保存到：\n%s\n\n是否继续？' % output_dir):
             chosen_parent = filedialog.askdirectory(
                 title='选择保存文件夹（将创建: %s）' % default_dir_name,
-                initialdir=os.path.dirname(pdf_path) or None)
+                initialdir=os.path.dirname(source_path) or None)
             if not chosen_parent:
                 self.logln('已取消：未选择保存文件夹')
                 return
             output_dir = os.path.join(chosen_parent, default_dir_name)
-        render_desc = ('页面(分辨率%d)' % render_dpi) if render_dpi else 'PDF内嵌图片'
+        render_desc = ('页面(分辨率%d)' % render_dpi) if render_dpi else '内嵌图片'
         self.logln('保存到: %s' % output_dir)
         if page_range is not None:
             self.logln('正在提取%s（%s）页 %d-%d…'
@@ -528,7 +536,7 @@ class App:
         else:
             self.logln('正在提取%s（%s）…' % (render_desc, image_format))
         self._task_start('images', core._mp_extract_images,
-                         (pdf_path, render_dpi, image_format, jpeg_quality,
+                         (source_path, render_dpi, image_format, jpeg_quality,
                           self._tm.cancel_event, self._tm.pause_event, output_dir,
                           page_range[0] if page_range else None,
                           page_range[1] if page_range else None))
