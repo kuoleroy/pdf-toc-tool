@@ -14,11 +14,21 @@ import ebook
 import ocr
 import taskmgr
 
+# 拖拽支持（可选依赖）：未安装时降级为普通窗口，不影响其他功能
+HAS_DND = False
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+    HAS_DND = True
+except ImportError:
+    TkinterDnD = None
+
 VERSION = '1.2.1'
 
 # ---- 常量 ----
 PADDING = {'padx': 8, 'pady': 4}
 RE_PAGE_RANGE = re.compile(r'^\s*(\d+)\s*[-—–]\s*(\d+)\s*$')
+PDF_EXTENSIONS = {'.pdf', '.epub', '.mobi', '.azw3', '.prc', '.azw'}
+TXT_EXTENSION = '.txt'
 DPI_MIN = 1
 DPI_MAX = 1000
 DEFAULT_JPEG_QUALITY = 85
@@ -51,7 +61,9 @@ class App:
         row_frame = ttk.Frame(file_frame)
         row_frame.pack(fill='x', **PADDING)
         ttk.Label(row_frame, text='PDF文件:').pack(side='left')
-        ttk.Entry(row_frame, textvariable=self.pdf_var).pack(side='left', fill='x', expand=True, padx=4)
+        self.pdf_entry = ttk.Entry(row_frame, textvariable=self.pdf_var)
+        self.pdf_entry.pack(side='left', fill='x', expand=True, padx=4)
+        self._register_drop(self.pdf_entry)
         self.btn_browse_pdf = ttk.Button(
             row_frame, text='浏览…',
             command=lambda: self.browse(self.pdf_var, '选择PDF/电子书文件',
@@ -60,7 +72,9 @@ class App:
         row_frame = ttk.Frame(file_frame)
         row_frame.pack(fill='x', **PADDING)
         ttk.Label(row_frame, text='目录txt:').pack(side='left')
-        ttk.Entry(row_frame, textvariable=self.txt_var).pack(side='left', fill='x', expand=True, padx=4)
+        self.txt_entry = ttk.Entry(row_frame, textvariable=self.txt_var)
+        self.txt_entry.pack(side='left', fill='x', expand=True, padx=4)
+        self._register_drop(self.txt_entry)
         self.btn_browse_txt = ttk.Button(
             row_frame, text='浏览…',
             command=lambda: self.browse(self.txt_var, '选择目录txt', [('文本', '*.txt'), ('全部', '*.*')]))
@@ -202,6 +216,30 @@ class App:
         selected_path = filedialog.askopenfilename(title=title, filetypes=file_type_filters)
         if selected_path:
             target_var.set(selected_path)
+
+    def _register_drop(self, target_entry: ttk.Entry) -> None:
+        """注册拖放目标：支持把文件直接拖入输入框（需 tkinterdnd2）"""
+        if HAS_DND:
+            target_entry.drop_target_register(DND_FILES)
+            target_entry.dnd_bind('<<Drop>>', self._on_file_drop)
+
+    def _on_file_drop(self, event) -> str:
+        """处理拖入的文件：按扩展名归类填入PDF/txt输入框（混合拖入则分别填入）"""
+        dropped_paths = list(self.root.tk.splitlist(event.data))
+        pdf_path = None
+        txt_path = None
+        for dropped_path in dropped_paths:
+            file_extension = os.path.splitext(dropped_path)[1].lower()
+            if file_extension in PDF_EXTENSIONS and pdf_path is None:
+                pdf_path = dropped_path
+            elif file_extension == TXT_EXTENSION and txt_path is None:
+                txt_path = dropped_path
+        if pdf_path:
+            self.pdf_var.set(pdf_path)
+        if txt_path:
+            self.txt_var.set(txt_path)
+        self.logln('已拖入: %s' % '  |  '.join(dropped_paths))
+        return 'break'
 
     def on_mode(self) -> None:
         """按操作模式切换选项区显示（写入/提取/图片）"""
@@ -661,7 +699,8 @@ class App:
 
 
 def main() -> int:
-    root = tk.Tk()
+    # 优先使用支持文件拖放的根窗口；未安装 tkinterdnd2 时降级普通窗口
+    root = TkinterDnD.Tk() if HAS_DND else tk.Tk()
     App(root)
     root.mainloop()
     return 0
