@@ -66,8 +66,9 @@ def _mp_ocr_task(q, pdf_path, start_page, end_page, cancel_event, pause_event) -
         text = ocr_to_txt(pdf_path, start_page, end_page, ocr=engine,
                           progress=lambda done, total, message: q.put(('progress', done, total, message)),
                           cancel_event=cancel_event, pause_event=pause_event)
-        # 目录第一行常无页码，用页号范围起始页兜底，避免首条书签缺页码
-        text = apply_first_line_page_fallback(text, start_page)
+        # 目录第一行常无页码，补"正文第一页的PDF页号"（目录范围结束+1）兜底，
+        # 保证首条书签至少带一个可用的PDF页号（配合偏移即为正文起始页）
+        text = apply_first_line_page_fallback(text, end_page + 1)
         q.put(('ocr_done', text))
         offset, first_printed_number = detect_offset(
             pdf_path, start_page, end_page, ocr=engine,
@@ -276,6 +277,8 @@ def _append_low_confidence(output_lines: List[str], text: str, score: float) -> 
 def apply_first_line_page_fallback(ocr_text: str, fallback_page: int) -> str:
     """OCR结果首行若无页码，补上回退页码（目录第一行常识别不到页码）
 
+    回退页码取"正文第一页的PDF页号"（目录页范围结束+1）：
+    目录首条通常对应正文起始，补上后配合偏移即可定位到正文首页。
     处理两类首行：
       1. "# 无页码(...): 标题" 提示行 -> 去掉前缀并在标题后补页码
       2. 普通无页码标题行 -> 行尾补页码
