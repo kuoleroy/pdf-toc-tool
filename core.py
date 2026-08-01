@@ -53,16 +53,18 @@ def check_task(cancel_event=None, pause_event=None) -> None:
 
 
 def _mp_extract_images(q, pdf_path, dpi, fmt, quality, cancel_event, pause_event,
-                       out_dir=None) -> None:
+                       out_dir=None, start_page=None, end_page=None) -> None:
     """子进程入口：提取图片，进度/结果经 multiprocessing.Queue 回传
 
     out_dir 可选：为 None 时默认 PDF 同目录的 "<书名>_图片" 文件夹
+    start_page/end_page 可选：限定提取的PDF页号范围（1-based，含边界），None=全部
     """
     try:
         out_dir, image_count = extract_images(
             pdf_path, out_dir, dpi, fmt, quality,
             progress=lambda done, total, message: q.put(('progress', done, total, message)),
-            cancel_event=cancel_event, pause_event=pause_event)
+            cancel_event=cancel_event, pause_event=pause_event,
+            start_page=start_page, end_page=end_page)
         q.put(('done', out_dir, image_count))
     except Exception as error:
         q.put(('error', type(error).__name__ + ': ' + str(error)))
