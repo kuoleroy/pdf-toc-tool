@@ -66,6 +66,8 @@ def _mp_ocr_task(q, pdf_path, start_page, end_page, cancel_event, pause_event) -
         text = ocr_to_txt(pdf_path, start_page, end_page, ocr=engine,
                           progress=lambda done, total, message: q.put(('progress', done, total, message)),
                           cancel_event=cancel_event, pause_event=pause_event)
+        # 目录第一行常无页码，用页号范围起始页兜底，避免首条书签缺页码
+        text = apply_first_line_page_fallback(text, start_page)
         q.put(('ocr_done', text))
         offset, first_printed_number = detect_offset(
             pdf_path, start_page, end_page, ocr=engine,
@@ -269,6 +271,34 @@ def _append_low_confidence(output_lines: List[str], text: str, score: float) -> 
         output_lines.append('# 低置信度(%.2f): %s' % (score, text))
     else:
         output_lines.append(text)
+
+
+def apply_first_line_page_fallback(ocr_text: str, fallback_page: int) -> str:
+    """OCR结果首行若无页码，补上回退页码（目录第一行常识别不到页码）
+
+    处理两类首行：
+      1. "# 无页码(...): 标题" 提示行 -> 去掉前缀并在标题后补页码
+      2. 普通无页码标题行 -> 行尾补页码
+    首行已有页码或以 # 开头（缺标题/低置信度）时不做修改。
+    """
+    output_lines = ocr_text.split('\n')
+    for line_index, line in enumerate(output_lines):
+        if not line.strip():
+            continue
+        if re.search(r'\d+\s*$', line):
+            break
+        if line.startswith('#'):
+            no_page_match = re.match(r'^# 无页码.*?:[ ]*(.+)$', line)
+            if no_page_match:
+                title_with_indent = no_page_match.group(1).rstrip()
+                # 保留行首全角缩进（层级信息），仅去尾部空白
+                if title_with_indent.strip():
+                    output_lines[line_index] = '%s %d' % (title_with_indent,
+                                                          fallback_page)
+        else:
+            output_lines[line_index] = '%s %d' % (line.rstrip(), fallback_page)
+        break
+    return '\n'.join(output_lines)
 
 
 def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int = OCR_DPI_DEFAULT,
