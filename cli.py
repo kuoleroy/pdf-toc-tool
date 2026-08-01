@@ -63,9 +63,13 @@ def main(args):
                 _print_usage()
                 return 1
         engine = ocr.load_ocr()
-        txt = ocr.ocr_to_txt(pdf, start, end, ocr=engine, progress=lambda s: print(s, flush=True))
+        prog = lambda d, t, m: sys.stdout.write('\rOCR %d/%d  %s   ' % (d, t, m))
+        txt = ocr.ocr_to_txt(pdf, start, end, ocr=engine, progress=prog)
+        sys.stdout.write('\n')
         if detect:
-            offset, n0 = ocr.detect_offset(pdf, start, end, ocr=engine)
+            offset, n0 = ocr.detect_offset(pdf, start, end, ocr=engine,
+                                           progress=prog, skip_first=True)
+            sys.stdout.write('\n')
             if offset is not None:
                 print('自动检测：PDF页偏移=%d' % offset)
             else:
@@ -109,7 +113,9 @@ def main(args):
             else:
                 _print_usage()
                 return 1
-        out_dir, count = core.extract_images(pdf, out_dir, dpi, fmt, quality)
+        prog = lambda d, t, m: sys.stdout.write('\r提取 %d/%d  %s   ' % (d, t, m))
+        out_dir, count = core.extract_images(pdf, out_dir, dpi, fmt, quality, progress=prog)
+        sys.stdout.write('\n')
         print('提取 %d 张%s（%s） -> %s' % (count, '页面' if dpi else '图片', fmt, out_dir))
         return 0
     _print_usage()

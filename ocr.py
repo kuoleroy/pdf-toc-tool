@@ -19,6 +19,8 @@ import time
 import fitz
 import numpy as np
 
+from core import check_task
+
 HAS_OCR = False
 _POCR_MODULE = None
 try:
@@ -196,13 +198,15 @@ def _split_glued(s):
     return best
 
 
-def ocr_to_txt(pdf_path, start_page, end_page, ocr=None, dpi=150, progress=None):
+def ocr_to_txt(pdf_path, start_page, end_page, ocr=None, dpi=150, progress=None,
+               cancel_event=None, pause_event=None):
     """OCR目录页(PDF页号) -> 缩进式txt文本（全角空格缩进 + 标题 + 页码）
     ocr 可传入已加载的引擎实例（load_ocr()），否则自动加载
     说明：# 开头为提示行（无页码/缺标题/低置信度/页码异常），可删除或修改"""
     if ocr is None:
         ocr = load_ocr()
-    entries = _extract_entries(pdf_path, start_page, end_page, ocr, dpi, progress)
+    entries = _extract_entries(pdf_path, start_page, end_page, ocr, dpi, progress,
+                               cancel_event, pause_event)
     if not entries:
         raise ValueError('OCR未识别到任何目录条目')
     out = []
