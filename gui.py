@@ -372,6 +372,13 @@ class App:
         else:
             self.prog_label.configure(text='打开/加载中…')
 
+    def _open_folder(self, folder_path: str) -> None:
+        """在资源管理器中打开文件夹（Windows）；失败时仅记录日志不打断"""
+        try:
+            os.startfile(folder_path)
+        except OSError as error:
+            self.logln('提示: 无法打开文件夹 %s（%s）' % (folder_path, error))
+
     def _poll_queue(self) -> None:
         if self._task is None:
             return
@@ -390,6 +397,7 @@ class App:
                 image_count, '页面' if finished_type == 'images' else '图片'))
             self.logln('已保存到: %s' % output_dir)
             messagebox.showinfo('完成', '已提取 %d 张图片\n%s' % (image_count, output_dir))
+            self._open_folder(output_dir)
         elif message_kind == 'done_write':
             self._task_end()
             _kind, output_path, bookmark_count = message
