@@ -3,12 +3,77 @@
 import os
 import re
 import shutil
+import time
 
 import fitz
 
 RE_RANGE = re.compile(r'^(　*)(.*?)[…\.]*\s*(\d+)\s*[—–\-]\s*(\d+)\s*$')
 RE_SINGLE = re.compile(r'^(　*)(.*?)[…\.]*\s*(\d+)\s*$')
 RE_PDFPAGE = re.compile(r'^(　*)(.*?)[…\.]*\s*\[p(\d+)\]\s*$')
+
+
+class TaskCancelled(Exception):
+    """任务被用户取消"""
+    pass
+
+
+def check_task(cancel_event=None, pause_event=None):
+    """每页循环中调用：cancel_event 置位则抛 TaskCancelled；pause_event 置位则阻塞等待"""
+    if cancel_event is not None and cancel_event.is_set():
+        raise TaskCancelled()
+    if pause_event is not None:
+        while pause_event.is_set():
+            if cancel_event is not None and cancel_event.is_set():
+                raise TaskCancelled()
+            time.sleep(0.1)
+
+
+def _mp_extract_images(q, pdf_path, dpi, fmt, quality, cancel_event, pause_event):
+    """子进程入口：提取图片，进度/结果经 multiprocessing.Queue 回传"""
+    try:
+        out_dir, count = extract_images(
+            pdf_path, None, dpi, fmt, quality,
+            progress=lambda d, t, m: q.put(('progress', d, t, m)),
+            cancel_event=cancel_event, pause_event=pause_event)
+        q.put(('done', out_dir, count))
+    except Exception as e:
+        q.put(('error', type(e).__name__ + ': ' + str(e)))
+
+
+def _mp_write_toc(q, pdf_path, toc, out_mode):
+    """子进程入口：写入书签"""
+    try:
+        out = write_toc(pdf_path, toc, out_mode)
+        d = fitz.open(out)
+        n = len(d.get_toc())
+        d.close()
+        q.put(('done_write', out, n))
+    except Exception as e:
+        q.put(('error', type(e).__name__ + ': ' + str(e)))
+
+
+def _mp_extract_toc(q, path, page_fmt):
+    """子进程入口：提取PDF书签或电子书目录 -> ('extract_done', is_ebook, entries, out)"""
+    import ebook
+    try:
+        base, ext = os.path.splitext(path)
+        is_ebook = ebook.is_ebook(path)
+        if is_ebook:
+            entries = ebook.extract_toc(path)
+            out = base + '_目录.txt'
+            with open(out, 'w', encoding='utf-8-sig') as f:
+                f.write(ebook.to_txt(entries))
+            q.put(('extract_done', True, entries, out))
+            return
+        toc = read_toc(path)
+        if not toc:
+            q.put(('extract_none',))
+            return
+        out = base + '_书签' + ext.replace('.pdf', '.txt')
+        export_toc_txt(toc, out, page_fmt)
+        q.put(('extract_done', False, toc, out))
+    except Exception as e:
+        q.put(('error', type(e).__name__ + ': ' + str(e)))
 
 
 def parse_toc(txt_path):
@@ -21,6 +86,11 @@ def parse_toc(txt_path):
             line = line.rstrip('\r\n')
             if not line.strip():
                 continue
+            if line.startswith('#'):
+                m = re.match(r'^#\s*低置信度\(\d*\.?\d+\):\s*(.*)$', line)
+                if not m:
+                    continue
+                line = m.group(1)
             if re.match(r'^\s*目\s*录\s*$', line):
                 continue
             if re.match(r'^\s*\d{4}\s*[—–\-]\s*\d{4}\s*年?\s*$', line):
@@ -63,9 +133,14 @@ def levels_from_indent(entries):
 
 
 def build_toc(entries, offset):
-    """entries(已带level) -> [(level, title, pdf_page)]，offset=印刷页->PDF页偏移(0-based索引差)"""
+    """entries(已带level) -> [(level, title, pdf_page)]，offset=印刷页->PDF页偏移(0-based索引差)
+    层级平滑：不允许跳级（L1直接到L3会被压到L2），避免PDF报bad hierarchy level"""
     toc = []
+    last = 0
     for lvl, title, kind, num in entries:
+        if lvl > last + 1:
+            lvl = last + 1
+        last = max(lvl, 1)
         if kind == 'pdf':
             page = num
         else:
@@ -107,11 +182,13 @@ def read_toc(pdf_path):
 IMAGE_FORMATS = {'orig', 'png', 'jpeg'}
 
 
-def extract_images(pdf_path, out_dir=None, dpi=None, fmt='orig', quality=85):
+def extract_images(pdf_path, out_dir=None, dpi=None, fmt='orig', quality=85, progress=None,
+                   cancel_event=None, pause_event=None):
     """提取PDF图片 -> (输出目录, 图片数)
     dpi=None：提取内嵌图片（fmt='orig' 原样保存，或转 png/jpeg）；
     dpi=整数：按分辨率渲染每页为图片（fmt: png/jpeg，默认png）；
-    quality：JPEG质量(1-100)"""
+    quality：JPEG质量(1-100)；progress(done, total, msg)：进度回调；
+    cancel_event/pause_event：threading.Event，支持停止/暂停（页间生效）"""
     fmt = (fmt or 'orig').lower()
     if fmt not in IMAGE_FORMATS:
         raise ValueError('不支持的图片格式: %s（支持 %s）' % (fmt, '/'.join(sorted(IMAGE_FORMATS))))
@@ -126,12 +203,16 @@ def extract_images(pdf_path, out_dir=None, dpi=None, fmt='orig', quality=85):
     doc = fitz.open(pdf_path)
     count = 0
     try:
+        total = doc.page_count
         if dpi:
-            for page_no in range(doc.page_count):
+            for page_no in range(total):
+                check_task(cancel_event, pause_event)
                 pix = doc[page_no].get_pixmap(dpi=dpi, alpha=(fmt not in ('jpeg',)))
                 name = '第%03d页.%s' % (page_no + 1, ext)
                 pix.save(os.path.join(out_dir, name), jpg_quality=quality)
                 count += 1
+                if progress:
+                    progress(page_no + 1, total, '渲染第 %d/%d 页' % (page_no + 1, total))
             return out_dir, count
         import hashlib
         saved = set()
@@ -160,9 +241,12 @@ def extract_images(pdf_path, out_dir=None, dpi=None, fmt='orig', quality=85):
             with open(os.path.join(out_dir, name), 'wb') as f:
                 f.write(data)
 
-        for page_no in range(doc.page_count):
+        for page_no in range(total):
+            check_task(cancel_event, pause_event)
             for img in doc.get_page_images(page_no, full=True):
                 save_image(img[0], page_no + 1)
+            if progress:
+                progress(page_no + 1, total, '扫描第 %d/%d 页' % (page_no + 1, total))
     finally:
         doc.close()
     return out_dir, count

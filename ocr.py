@@ -14,6 +14,7 @@ rapidocr 为可选依赖：未安装时 HAS_OCR=False，本模块其余功能不
 （程序整体仍可正常使用，仅 OCR 功能禁用）。
 """
 import re
+import time
 
 import fitz
 import numpy as np
@@ -31,6 +32,24 @@ RE_DOTS = re.compile(r'[….\.·]{2,}')
 _ocr_instances = {}
 
 
+def _mp_ocr_task(q, pdf_path, start_page, end_page, cancel_event, pause_event):
+    """子进程入口：OCR目录页 + 检测偏移，结果经 multiprocessing.Queue 回传
+    进度：渲染阶段 0~T，识别阶段 T~2T，检测偏移阶段 2T~2T+S（T=页数, S=扫描页数）"""
+    try:
+        engine = load_ocr()
+        txt = ocr_to_txt(pdf_path, start_page, end_page, ocr=engine,
+                         progress=lambda d, t, m: q.put(('progress', d, t, m)),
+                         cancel_event=cancel_event, pause_event=pause_event)
+        q.put(('ocr_done', txt))
+        offset, n0 = detect_offset(pdf_path, start_page, end_page, ocr=engine,
+                                   progress=lambda d, t, m: q.put(('progress', d, t, m)),
+                                   cancel_event=cancel_event, pause_event=pause_event,
+                                   skip_first=True)
+        q.put(('ocr_offset', offset))
+    except Exception as e:
+        q.put(('error', type(e).__name__ + ': ' + str(e)))
+
+
 def load_ocr():
     """加载（并缓存）OCR 引擎实例；首次运行自动下载模型，需联网"""
     global _ocr_instances
@@ -42,30 +61,53 @@ def load_ocr():
     return _ocr_instances[key]
 
 
-def render_pages(pdf_path, start_page, end_page, dpi=150):
-    """渲染PDF页(1-based PDF页号) -> [(pdf_page_no, numpy RGB图像)]"""
+def render_pages(pdf_path, start_page, end_page, dpi=150, cancel_event=None, pause_event=None,
+                 progress=None):
+    """渲染PDF页(1-based PDF页号) -> [(pdf_page_no, numpy RGB图像)]
+    progress(done, total, msg)：每渲染一页回调一次"""
     doc = fitz.open(pdf_path)
     out = []
-    for p in range(start_page, end_page + 1):
-        idx = p - 1
-        if idx < 0 or idx >= doc.page_count:
-            continue
-        pix = doc[idx].get_pixmap(dpi=dpi, colorspace=fitz.csRGB, alpha=False)
-        arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
-        out.append((idx + 1, arr))
-    doc.close()
+    try:
+        total = max(end_page - start_page + 1, 0)
+        for p in range(start_page, end_page + 1):
+            idx = p - 1
+            if idx < 0 or idx >= doc.page_count:
+                continue
+            if cancel_event is not None and cancel_event.is_set():
+                raise RuntimeError('任务已取消')
+            if pause_event is not None:
+                while pause_event.is_set():
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise RuntimeError('任务已取消')
+                    time.sleep(0.1)
+            pix = doc[idx].get_pixmap(dpi=dpi, colorspace=fitz.csRGB, alpha=False)
+            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
+            out.append((idx + 1, arr))
+            if progress:
+                progress(len(out), total, '渲染第 %d/%d 页' % (len(out), total))
+    finally:
+        doc.close()
     return out
 
 
-def _ocr_images(ocr, images, progress=None):
-    """逐张OCR -> [(pdf_page_no, box_x, text, score)]"""
+def _ocr_images(ocr, images, progress=None, cancel_event=None, pause_event=None):
+    """逐张OCR -> [(pdf_page_no, box_x, text, score)]
+    progress(done, total, msg)：每识别一页回调一次"""
     lines = []
-    for pno, img in images:
+    total = len(images)
+    for k, (pno, img) in enumerate(images):
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError('任务已取消')
+        if pause_event is not None:
+            while pause_event.is_set():
+                if cancel_event is not None and cancel_event.is_set():
+                    raise RuntimeError('任务已取消')
+                time.sleep(0.1)
         raw = ocr(img)
         res = raw[0] if isinstance(raw, tuple) else raw
         if not res:
             if progress:
-                progress('第 %d 页：未识别到文字' % pno)
+                progress(k + 1, total, '识别第 %d/%d 页：无文字' % (k + 1, total))
             continue
         for j, item in enumerate(res):
             box, txt, sc = item[0], item[1], item[2]
@@ -78,7 +120,7 @@ def _ocr_images(ocr, images, progress=None):
                 pass
             lines.append((pno, x, str(txt), float(sc)))
         if progress:
-            progress('第 %d 页：识别 %d 行' % (pno, len(res)))
+            progress(k + 1, total, '识别第 %d/%d 页：%d 行' % (k + 1, total, len(res)))
     return lines
 
 
@@ -94,13 +136,19 @@ def _indent_level(x, min_x, step=18.0):
     return 2
 
 
-def _extract_entries(pdf_path, start_page, end_page, ocr, dpi=150, progress=None):
+def _extract_entries(pdf_path, start_page, end_page, ocr, dpi=150, progress=None,
+                     cancel_event=None, pause_event=None):
     """OCR目录页 -> [(pdf_page_no, indent, title, start_num, end_num, score)]
-    title 可为空(纯页码行)；start/end 为印刷页码，None 表示该行无页码"""
-    images = render_pages(pdf_path, start_page, end_page, dpi)
+    title 可为空(纯页码行)；start/end 为印刷页码，None 表示该行无页码
+    progress(done, total, msg)：渲染阶段 0~T，识别阶段 T~2T（T=页数）"""
+    total = end_page - start_page + 1
+    images = render_pages(pdf_path, start_page, end_page, dpi, cancel_event, pause_event,
+                          progress and (lambda d, t, m: progress(d, 2 * total, m)))
     if not images:
         raise ValueError('页码范围无效：PDF页 %d-%d 不存在' % (start_page, end_page))
-    lines = _ocr_images(ocr, images, progress)
+    lines = _ocr_images(ocr, images,
+                        progress and (lambda d, t, m: progress(total + d, 2 * total, m)),
+                        cancel_event, pause_event)
     if not lines:
         raise ValueError('OCR未识别到任何文字（请确认页码范围是否为目录页）')
     by_page = {}
@@ -209,12 +257,15 @@ def ocr_to_txt(pdf_path, start_page, end_page, ocr=None, dpi=150, progress=None)
     return '\n'.join(out) + '\n'
 
 
-def detect_offset(pdf_path, start_page, end_page, ocr=None, dpi=150, progress=None):
+def detect_offset(pdf_path, start_page, end_page, ocr=None, dpi=150, progress=None,
+                  cancel_event=None, pause_event=None, skip_first=False):
     """自动检测印刷页->PDF页偏移量。
 
     原理：目录页之后是正文，正文每页底部有印刷页码（独立数字行）。
     对目录后的若干页扫描页脚数字，页码 num 出现在 PDF 索引 idx 时
     满足 idx = num + offset，取一致性最高的 offset 作为结果。
+
+    skip_first=True：跳过目录页的重复OCR（调用方已识别过，仅作页脚扫描）。
 
     返回 (offset, n0)；失败返回 (None, None)。n0 为目录中最小的印刷页码(可能为None)。
     """
@@ -222,19 +273,25 @@ def detect_offset(pdf_path, start_page, end_page, ocr=None, dpi=150, progress=No
         ocr = load_ocr()
     # 目录最小页码（参考值）
     n0 = None
-    try:
-        entries = _extract_entries(pdf_path, start_page, end_page, ocr, dpi, progress)
-        nums = sorted({s for _, _, _, s, e, _ in entries if s and 1 <= s <= 300})
-        if nums:
-            n0 = nums[0]
-    except Exception:
-        pass
+    if not skip_first:
+        try:
+            entries = _extract_entries(pdf_path, start_page, end_page, ocr, dpi, progress,
+                                       cancel_event, pause_event)
+            nums = sorted({s for _, _, _, s, e, _ in entries if s and 1 <= s <= 300})
+            if nums:
+                n0 = nums[0]
+        except Exception:
+            pass
     # 扫描目录之后的正文页页脚
     doc = fitz.open(pdf_path)
     try:
         scan_end = min(end_page + 8, doc.page_count)
+        s_total = scan_end - end_page
         cands = []
-        for idx in range(end_page, scan_end):
+        for k, idx in enumerate(range(end_page, scan_end)):
+            check_task(cancel_event, pause_event)
+            if progress:
+                progress(2 * s_total + k, 2 * s_total + s_total, '扫描页脚 %d/%d' % (k + 1, s_total))
             pix = doc[idx].get_pixmap(dpi=dpi, colorspace=fitz.csRGB, alpha=False)
             h = pix.height
             arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
