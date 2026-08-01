@@ -502,8 +502,16 @@ class App:
         if not txt.strip():
             messagebox.showwarning('提示', 'OCR结果为空')
             return
-        p = filedialog.asksaveasfilename(title='保存OCR结果', defaultextension='.txt',
-                                         filetypes=[('文本', '*.txt')])
+        pdf = self.pdf_var.get().strip()
+        base, _ = os.path.splitext(pdf)
+        if not base:
+            base = 'OCR结果'
+        p = filedialog.asksaveasfilename(
+            title='保存OCR结果',
+            defaultextension='.txt',
+            filetypes=[('文本', '*.txt')],
+            initialdir=os.path.dirname(pdf) or None,
+            initialfile=os.path.basename(base) + '_目录.txt')
         if p:
             with open(p, 'w', encoding='utf-8-sig') as f:
                 f.write(txt)
