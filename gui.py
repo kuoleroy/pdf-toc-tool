@@ -8,8 +8,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import fitz
 
-from core import (DPI_MAX, DPI_MIN, JPEG_QUALITY_MAX, JPEG_QUALITY_MIN,
-                  IMAGE_OUTPUT_SUFFIX)
+from core import IMAGE_OUTPUT_SUFFIX, JPEG_QUALITY_MAX
 import core
 import dlg
 import ebook
@@ -32,7 +31,9 @@ RE_PAGE_RANGE = re.compile(r'^\s*(\d+)\s*[-—–]\s*(\d+)\s*$')
 RE_IMAGE_PAGE_RANGE = re.compile(r'^\s*(\d+)\s*(?:[-—–]\s*(\d+))?\s*$')
 PDF_EXTENSIONS = {'.pdf', '.epub', '.mobi', '.azw3', '.prc', '.azw'}
 TXT_EXTENSION = '.txt'
-DEFAULT_JPEG_QUALITY = 85
+IMAGE_INLINE_OPTION = '内嵌图片'       # 分辨率下拉框：提取PDF内嵌图片（不渲染）
+DEFAULT_IMAGE_RESOLUTION = '600'       # 分辨率下拉框默认值（渲染模式的默认分辨率）
+JPEG_QUALITY_DEFAULT = JPEG_QUALITY_MAX  # 图片提取JPEG质量固定最高
 LOG_PREVIEW_COUNT = 20       # 日志区预览的最大条数
 WATCHDOG_INTERVAL_MS = 4000  # 长时间无进度时的提示更新间隔
 POLL_INTERVAL_MS = 100       # 消息队列轮询间隔
@@ -120,16 +121,17 @@ class App:
         ttk.Label(self.image_options, text='页号(空=全部):').pack(side='left')
         self.page_range_var = tk.StringVar()
         ttk.Entry(self.image_options, textvariable=self.page_range_var, width=8).pack(side='left', padx=4)
-        ttk.Label(self.image_options, text='dpi(空=内嵌):').pack(side='left')
-        self.dpi_var = tk.StringVar()
-        ttk.Entry(self.image_options, textvariable=self.dpi_var, width=6).pack(side='left', padx=4)
+        ttk.Label(self.image_options, text='分辨率:').pack(side='left')
+        self.resolution_var = tk.StringVar(value=DEFAULT_IMAGE_RESOLUTION)
+        ttk.Combobox(self.image_options, textvariable=self.resolution_var, width=8,
+                     state='readonly',
+                     values=(IMAGE_INLINE_OPTION, '300', '400', '600')).pack(side='left', padx=4)
         ttk.Label(self.image_options, text='格式:').pack(side='left')
         self.fmt_var = tk.StringVar(value='orig')
         ttk.Combobox(self.image_options, textvariable=self.fmt_var, width=7, state='readonly',
                      values=('orig', 'png', 'jpeg')).pack(side='left', padx=4)
-        ttk.Label(self.image_options, text='JPEG质量:').pack(side='left')
-        self.quality_var = tk.StringVar(value=str(DEFAULT_JPEG_QUALITY))
-        ttk.Entry(self.image_options, textvariable=self.quality_var, width=4).pack(side='left', padx=4)
+        self.hint(self.image_options, '选"内嵌图片"提取PDF内嵌图原样保存；选分辨率按每页渲染。'
+                                     'JPEG质量固定最高').pack(side='left', padx=4)
         self.image_options.pack_forget()
 
         # ---- OCR 识别目录页 ----
@@ -487,18 +489,13 @@ class App:
             raise ValueError('请选择PDF文件')
         if not os.path.isfile(pdf_path):
             raise ValueError('PDF文件不存在: %s' % pdf_path)
-        dpi_text = self.dpi_var.get().strip()
-        render_dpi = int(dpi_text) if dpi_text else None
-        if render_dpi is not None and not (DPI_MIN <= render_dpi <= DPI_MAX):
-            raise ValueError('分辨率dpi应在%d-%d之间' % (DPI_MIN, DPI_MAX))
+        resolution_text = self.resolution_var.get().strip()
+        if resolution_text == IMAGE_INLINE_OPTION:
+            render_dpi = None
+        else:
+            render_dpi = int(resolution_text)
         image_format = self.fmt_var.get().strip().lower() or 'orig'
-        try:
-            quality_text = self.quality_var.get().strip() or str(DEFAULT_JPEG_QUALITY)
-            jpeg_quality = int(quality_text)
-        except ValueError:
-            raise ValueError('JPEG质量必须是整数')
-        if not (JPEG_QUALITY_MIN <= jpeg_quality <= JPEG_QUALITY_MAX):
-            raise ValueError('JPEG质量应在%d-%d之间' % (JPEG_QUALITY_MIN, JPEG_QUALITY_MAX))
+        jpeg_quality = JPEG_QUALITY_DEFAULT
         # 页号范围：空=全部页；"12-30"=区间；"12"=单页
         page_range = self._parse_image_page_range()
         # 弹框选择保存位置（父目录），文件夹名固定 "<书名>_图片"，可取消
@@ -511,12 +508,12 @@ class App:
             self.logln('已取消：未选择保存文件夹')
             return
         output_dir = os.path.join(chosen_parent, default_dir_name)
+        render_desc = ('页面(分辨率%d)' % render_dpi) if render_dpi else 'PDF内嵌图片'
         if page_range is not None:
             self.logln('正在提取%s（%s）页 %d-%d…'
-                       % ('页面' if render_dpi else 'PDF内嵌图片', image_format,
-                          page_range[0], page_range[1]))
+                       % (render_desc, image_format, page_range[0], page_range[1]))
         else:
-            self.logln('正在提取%s（%s）…' % ('页面' if render_dpi else 'PDF内嵌图片', image_format))
+            self.logln('正在提取%s（%s）…' % (render_desc, image_format))
         self._task_start('images', core._mp_extract_images,
                          (pdf_path, render_dpi, image_format, jpeg_quality,
                           self._tm.cancel_event, self._tm.pause_event, output_dir,
