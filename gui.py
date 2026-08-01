@@ -32,7 +32,9 @@ RE_IMAGE_PAGE_RANGE = re.compile(r'^\s*(\d+)\s*(?:[-—–]\s*(\d+))?\s*$')
 PDF_EXTENSIONS = {'.pdf', '.epub', '.mobi', '.azw3', '.prc', '.azw'}
 TXT_EXTENSION = '.txt'
 IMAGE_INLINE_OPTION = '内嵌图片'       # 分辨率下拉框：提取PDF内嵌图片（不渲染）
-DEFAULT_IMAGE_RESOLUTION = '300'       # 分辨率下拉框默认值（渲染模式的默认分辨率）
+DEFAULT_IMAGE_RESOLUTION = '300'       # 分辨率默认值（渲染模式的默认分辨率）
+RESOLUTION_MIN = 200                   # 分辨率可输入范围下限
+RESOLUTION_MAX = 600                   # 分辨率可输入范围上限
 JPEG_QUALITY_DEFAULT = JPEG_QUALITY_MAX  # 图片提取JPEG质量固定最高
 LOG_PREVIEW_COUNT = 20       # 日志区预览的最大条数
 WATCHDOG_INTERVAL_MS = 4000  # 长时间无进度时的提示更新间隔
@@ -123,15 +125,18 @@ class App:
         ttk.Entry(self.image_options, textvariable=self.page_range_var, width=8).pack(side='left', padx=4)
         ttk.Label(self.image_options, text='分辨率:').pack(side='left')
         self.resolution_var = tk.StringVar(value=DEFAULT_IMAGE_RESOLUTION)
-        ttk.Combobox(self.image_options, textvariable=self.resolution_var, width=8,
-                     state='readonly',
-                     values=(IMAGE_INLINE_OPTION, '200', '300', '400')).pack(side='left', padx=4)
+        self.resolution_box = ttk.Combobox(
+            self.image_options, textvariable=self.resolution_var, width=8,
+            values=(IMAGE_INLINE_OPTION, '200', '300', '400', '600'))
+        self.resolution_box.pack(side='left', padx=4)
+        self.resolution_box.bind('<FocusOut>', self._on_resolution_changed)
+        self.resolution_var.trace_add('write', self._on_resolution_changed)
         ttk.Label(self.image_options, text='格式:').pack(side='left')
-        self.fmt_var = tk.StringVar(value='orig')
+        self.fmt_var = tk.StringVar(value='jpeg')
         ttk.Combobox(self.image_options, textvariable=self.fmt_var, width=7, state='readonly',
                      values=('orig', 'png', 'jpeg')).pack(side='left', padx=4)
-        self.hint(self.image_options, '选"内嵌图片"提取PDF内嵌图原样保存；选分辨率按每页渲染。'
-                                     'JPEG质量固定最高').pack(side='left', padx=4)
+        self.hint(self.image_options, '选"内嵌图片"原样提取；或选择/输入 200-600 按每页渲染。'
+                                     '渲染默认JPEG，内嵌默认orig，JPEG质量固定最高').pack(side='left', padx=4)
         self.image_options.pack_forget()
 
         # ---- OCR 识别目录页 ----
@@ -501,7 +506,13 @@ class App:
         if resolution_text == IMAGE_INLINE_OPTION:
             render_dpi = None
         else:
-            render_dpi = int(resolution_text)
+            try:
+                render_dpi = int(resolution_text)
+            except ValueError:
+                raise ValueError('分辨率请输入 %d-%d 的数字，或选择"内嵌图片"'
+                                 % (RESOLUTION_MIN, RESOLUTION_MAX))
+            if not (RESOLUTION_MIN <= render_dpi <= RESOLUTION_MAX):
+                raise ValueError('分辨率应在 %d-%d 之间' % (RESOLUTION_MIN, RESOLUTION_MAX))
         image_format = self.fmt_var.get().strip().lower() or 'orig'
         jpeg_quality = JPEG_QUALITY_DEFAULT
         # 页号范围：空=全部页；"12-30"=区间；"12"=单页
@@ -534,6 +545,14 @@ class App:
                           self._tm.cancel_event, self._tm.pause_event, output_dir,
                           page_range[0] if page_range else None,
                           page_range[1] if page_range else None))
+
+    def _on_resolution_changed(self, *_args) -> None:
+        """分辨率与格式联动：选"内嵌图片"->格式orig；输入数字->格式jpeg"""
+        resolution_text = self.resolution_var.get().strip()
+        if resolution_text == IMAGE_INLINE_OPTION:
+            self.fmt_var.set('orig')
+        elif resolution_text.isdigit():
+            self.fmt_var.set('jpeg')
 
     def _parse_image_page_range(self) -> Optional[Tuple[int, int]]:
         """解析图片页号范围输入：空=None(全部)，"12-30"=区间，"12"=单页"""
