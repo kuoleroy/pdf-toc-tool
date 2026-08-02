@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>PDF 书签工具（网页版）</title>
+<style>
+  body { font-family: "Microsoft YaHei", sans-serif; max-width: 900px; margin: 0 auto; padding: 16px; background: #f5f6fa; }
+  h1 { text-align: center; color: #2c3e50; }
+  .card { background: #fff; border-radius: 8px; padding: 16px 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .card h2 { margin: 0 0 12px; font-size: 18px; color: #34495e; }
+  .row { margin: 8px 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .row label { min-width: 90px; color: #555; }
+  input[type=file] { font-size: 13px; }
+  input[type=text], select { padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; }
+  button { padding: 6px 18px; border: none; border-radius: 4px; background: #3498db; color: #fff; cursor: pointer; font-size: 14px; }
+  button:hover { background: #2980b9; }
+  button:disabled { background: #aaa; cursor: not-allowed; }
+  .status { margin-top: 10px; font-size: 13px; color: #27ae60; white-space: pre-wrap; }
+  .status.error { color: #e74c3c; }
+  .hint { font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<h1>PDF 书签工具（网页版）</h1>
+
+<div class="card">
+  <h2>1. 写入书签（txt → PDF）</h2>
+  <div class="row"><label>PDF文件:</label><input type="file" id="w_pdf"></div>
+  <div class="row"><label>目录txt:</label><input type="file" id="w_txt"></div>
+  <div class="row"><label>正文第一页:</label>
+    <input type="text" id="w_pdf_no" placeholder="PDF页号(可空)" size="10">
+    <input type="text" id="w_print_no" placeholder="印刷页码(可空)" size="10">
+    <span class="hint">都填时自动算偏移；txt 用 [p页号] 可留空</span>
+  </div>
+  <div class="row"><button id="w_btn">执行并下载 _带目录.pdf</button></div>
+  <div class="status" id="w_status"></div>
+</div>
+
+<div class="card">
+  <h2>2. 提取书签 / 电子书目录</h2>
+  <div class="row"><label>PDF/电子书:</label><input type="file" id="e_file"></div>
+  <div class="row"><label>行尾页号:</label>
+    <select id="e_page"><option value="1">带 [p页号]/[p序号]</option><option value="0">纯标题</option></select>
+  </div>
+  <div class="row"><button id="e_btn">执行并下载 txt</button></div>
+  <div class="status" id="e_status"></div>
+</div>
+
+<div class="card">
+  <h2>3. 提取图片</h2>
+  <div class="row"><label>PDF/电子书:</label><input type="file" id="i_file"></div>
+  <div class="row"><label>分辨率:</label>
+    <select id="i_res">
+      <option value="内嵌图片">内嵌图片（原样）</option>
+      <option value="200">渲染 200</option>
+      <option value="300">渲染 300</option>
+      <option value="400">渲染 400</option>
+      <option value="600">渲染 600</option>
+    </select>
+  </div>
+  <div class="row"><label>格式:</label>
+    <select id="i_fmt">
+      <option value="orig">orig（原样）</option>
+      <option value="jpeg">jpeg</option>
+      <option value="png">png</option>
+    </select>
+    <span class="hint">内嵌默认orig；渲染默认jpeg；电子书内嵌仅orig</span>
+  </div>
+  <div class="row"><label>页号范围:</label>
+    <input type="text" id="i_range" placeholder="空=全部，如 12-30 或 12" size="16">
+    <span class="hint">电子书内嵌按图片出现顺序</span>
+  </div>
+  <div class="row"><button id="i_btn">执行并下载 zip</button></div>
+  <div class="status" id="i_status"></div>
+</div>
+
+<script>
+function bindSubmit(btnId, statusId, url, buildForm, filenameHint) {
+  document.getElementById(btnId).addEventListener('click', function () {
+    var btn = this, status = document.getElementById(statusId);
+    btn.disabled = true;
+    status.className = 'status';
+    status.textContent = '处理中，请稍候…（大文件可能需要几分钟）';
+    var form = buildForm();
+    fetch(url, { method: 'POST', body: form })
+      .then(function (resp) {
+        if (!resp.ok) {
+          return resp.json().then(function (data) {
+            throw new Error(data.detail || ('HTTP ' + resp.status));
+          });
+        }
+        return resp.blob();
+      })
+      .then(function (blob) {
+        var link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = filenameHint();
+        document.body.appendChild(link);
+        link.click();
+        URL.revokeObjectURL(link.href);
+        status.className = 'status';
+        status.textContent = '完成，已开始下载。';
+      })
+      .catch(function (err) {
+        status.className = 'status error';
+        status.textContent = '失败: ' + err.message;
+      })
+      .then(function () { btn.disabled = false; });
+  });
+}
+
+bindSubmit('w_btn', 'w_status', '/api/write_toc', function () {
+  var form = new FormData();
+  form.append('pdf', document.getElementById('w_pdf').files[0]);
+  form.append('toc', document.getElementById('w_txt').files[0]);
+  form.append('first_pdf', document.getElementById('w_pdf_no').value);
+  form.append('first_print', document.getElementById('w_print_no').value);
+  return form;
+}, function () { return '带目录.pdf'; });
+
+bindSubmit('e_btn', 'e_status', '/api/extract_toc', function () {
+  var form = new FormData();
+  form.append('file', document.getElementById('e_file').files[0]);
+  form.append('with_page', document.getElementById('e_page').value);
+  return form;
+}, function () {
+  var name = document.getElementById('e_file').files[0].name;
+  return name.replace(/\.[^.]+$/, '') + '_目录.txt';
+});
+
+bindSubmit('i_btn', 'i_status', '/api/extract_images', function () {
+  var form = new FormData();
+  form.append('file', document.getElementById('i_file').files[0]);
+  form.append('resolution', document.getElementById('i_res').value);
+  form.append('fmt', document.getElementById('i_fmt').value);
+  form.append('page_range', document.getElementById('i_range').value);
+  return form;
+}, function () { return 'images.zip'; });
+</script>
+</body>
+</html>
