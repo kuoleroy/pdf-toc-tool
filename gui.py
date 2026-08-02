@@ -154,8 +154,9 @@ class App:
         self.btn_ocr_text = ttk.Button(row_frame, text='识别文字', command=self.do_ocr_text)
         self.btn_ocr_text.pack(side='left', padx=8)
         self.ocr_page_mark_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(row_frame, text='每页加[第N页]标记',
-                        variable=self.ocr_page_mark_var).pack(side='left', padx=8)
+        # 每页加[第N页]标记 复选框：暂注释隐藏，后续改为弹框控制
+        # ttk.Checkbutton(row_frame, text='每页加[第N页]标记',
+        #                 variable=self.ocr_page_mark_var).pack(side='left', padx=8)
         self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[识别目录]自动检测偏移；结果可编辑后[确认写入]或[保存OCR结果…]',
                   wrap=430).pack(side='left', padx=8)
 
