@@ -248,10 +248,10 @@ def _extract_entries(pdf_path: str, start_page: int, end_page: int, ocr_engine, 
 
 
 def _format_page_number(start_number: Optional[int], end_number: Optional[int]) -> str:
-    """印刷页码区间格式化："1-12" 或 "1"；无页码返回空串"""
+    """印刷页码格式化：以起始页码为准（识别的范围如 19-22 只取 19）；无页码返回空串"""
     if start_number is None:
         return ''
-    return '%d-%d' % (start_number, end_number) if start_number != end_number else str(start_number)
+    return str(start_number)
 
 
 def _split_glued_page_numbers(glued_text: str) -> Optional[Tuple[int, int]]:
