@@ -66,9 +66,9 @@ def _mp_ocr_task(q, pdf_path, start_page, end_page, cancel_event, pause_event) -
         text = ocr_to_txt(pdf_path, start_page, end_page, ocr=engine,
                           progress=lambda done, total, message: q.put(('progress', done, total, message)),
                           cancel_event=cancel_event, pause_event=pause_event)
-        # 目录第一行常无页码，补"正文第一页的PDF页号"（目录范围结束+1）兜底，
+        # 目录第一行常无页码，补"输入范围开头"的页号兜底（用户以输入开头为基准），
         # 保证首条书签至少带一个可用的PDF页号（配合偏移即为正文起始页）
-        text = apply_first_line_page_fallback(text, end_page + 1)
+        text = apply_first_line_page_fallback(text, start_page)
         q.put(('ocr_done', text))
         offset, first_printed_number = detect_offset(
             pdf_path, start_page, end_page, ocr=engine,
@@ -224,6 +224,9 @@ def _extract_entries(pdf_path: str, start_page: int, end_page: int, ocr_engine, 
             cleaned_text = RE_DOTS.sub('', text).strip()
             if not cleaned_text:
                 continue
+            # 目录页自身的"目录"标题行（可能带空格/点线分隔），不视为目录条目
+            if re.match(r'^\s*目\s*录\s*$', cleaned_text):
+                continue
             title = cleaned_text
             start_number = end_number = None
             page_match = (RE_PAGE_RANGE_TAIL.search(cleaned_text)
@@ -277,24 +280,19 @@ def _append_low_confidence(output_lines: List[str], text: str, score: float) -> 
 
 
 def apply_first_line_page_fallback(ocr_text: str, fallback_page: int) -> str:
-    """OCR结果首行若无页码，补上回退页码（目录第一行常识别不到页码）
+    """OCR结果首行页码无条件以输入范围开头为准（不管OCR识别到没有）
 
-    回退页码取"正文第一页的PDF页号"（目录页范围结束+1）：
+    回退页码取"输入范围的开头"（用户以输入开头为基准）：
     目录首条通常对应正文起始，补上后配合偏移即可定位到正文首页。
     处理两类首行：
       1. "# 无页码(...): 标题" 提示行 -> 去掉前缀并在标题后补页码
-      2. 普通无页码标题行 -> 行尾补页码
-    首行已有页码或以 # 开头（缺标题/低置信度）时不做修改。
+      2. 普通标题行 -> 行尾页码替换为范围开头；无页码则补上
+    以 # 开头的其他提示行（缺标题/低置信度）保持原样，不处理。
     """
     output_lines = ocr_text.split('\n')
     for line_index, line in enumerate(output_lines):
         if not line.strip():
             continue
-        if re.match(r'^\[第\d+页\]\s*$', line):
-            # [第N页] 标记行：跳过，继续找真正的首行内容
-            continue
-        if re.search(r'\d+\s*$', line):
-            break
         if line.startswith('#'):
             no_page_match = re.match(r'^# 无页码.*?:[ ]*(.+)$', line)
             if no_page_match:
@@ -303,6 +301,11 @@ def apply_first_line_page_fallback(ocr_text: str, fallback_page: int) -> str:
                 if title_with_indent.strip():
                     output_lines[line_index] = '%s ..... %d' % (title_with_indent,
                                                                 fallback_page)
+            break
+        replaced_line = re.sub(r'(\s*[…\.]*)\d+\s*$',
+                               lambda match: match.group(1) + str(fallback_page), line)
+        if replaced_line != line:
+            output_lines[line_index] = replaced_line
         else:
             output_lines[line_index] = '%s ..... %d' % (line.rstrip(), fallback_page)
         break

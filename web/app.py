@@ -354,7 +354,7 @@ def api_ocr_toc(file: UploadFile = File(...), page_range: str = Form('')):
         with _OCR_LOCK:
             engine = ocr_module.load_ocr()
             text = ocr_module.ocr_to_txt(file_path, start_page, end_page, ocr=engine)
-            text = ocr_module.apply_first_line_page_fallback(text, end_page + 1)
+            text = ocr_module.apply_first_line_page_fallback(text, start_page)
         output_path = os.path.join(work_dir, 'OCR目录.txt')
         with open(output_path, 'w', encoding='utf-8') as file_handle:
             file_handle.write(text)
