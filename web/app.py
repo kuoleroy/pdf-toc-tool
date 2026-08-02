@@ -149,86 +149,6 @@ def _validate_toc_lines(txt_path: str) -> None:
                                      % (line_number, line[:40]))
 
 
-_TOC_CLEAN_RE = re.compile(r'[\s.·…‥⋯・︙。、，,．－\-—_—]')
-
-
-def _auto_detect_offset(file_path: str, ocr_module, engine) -> Optional[int]:
-    """扫描PDF前若干页页眉/页脚数字，投票得出印刷页码->PDF页偏移；失败返回None
-
-    优先用PDF文本层（页眉/页脚区域内的纯数字），无文本层的扫描件改走OCR条带。
-    """
-    import numpy as np
-    import fitz
-    doc = fitz.open(file_path)
-    try:
-        scan_count = min(30, doc.page_count)
-        text_total = sum(len(doc[i].get_text()) for i in range(min(5, doc.page_count)))
-        if text_total > 20:
-            offset_votes = _vote_text_band(doc, scan_count)
-        else:
-            offset_votes = _vote_ocr_band(doc, scan_count, ocr_module, engine)
-        if not offset_votes:
-            return None
-        best_offset, best_votes = max(offset_votes.items(), key=lambda item: item[1])
-        if best_votes >= 2 and 0 <= best_offset <= 300:
-            return best_offset
-        return None
-    finally:
-        doc.close()
-
-
-def _vote_text_band(doc, scan_count: int) -> dict:
-    """文本层：页眉/页脚区域内的纯数字文本投票"""
-    offset_votes: dict = {}
-    for page_index in range(scan_count):
-        page = doc[page_index]
-        for word in page.get_text('words'):
-            x0, y0, x1, y1, text = word[0], word[1], word[2], word[3], word[4]
-            if not str(text).isdigit():
-                continue
-            printed_number = int(text)
-            if not (1 <= printed_number <= 2000):
-                continue
-            if not (y1 <= page.rect.height * 0.15 or y0 >= page.rect.height * 0.85):
-                continue
-            offset_candidate = page_index - printed_number
-            offset_votes[offset_candidate] = offset_votes.get(offset_candidate, 0) + 1
-    return offset_votes
-
-
-def _vote_ocr_band(doc, scan_count: int, ocr_module, engine) -> dict:
-    """OCR条带：渲染页眉/页脚条带放大识别数字投票"""
-    import numpy as np
-    import fitz
-    offset_votes: dict = {}
-    for page_index in range(scan_count):
-        page = doc[page_index]
-        for band in (0.0, 0.85):
-            clip = fitz.Rect(0, page.rect.height * band, page.rect.width,
-                             page.rect.height * (band + 0.15))
-            pixmap = page.get_pixmap(dpi=ocr_module.OCR_DPI_DEFAULT * 2, clip=clip,
-                                     colorspace=fitz.csRGB, alpha=False)
-            pixel_array = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
-                pixmap.height, pixmap.width, 3)
-            raw_output = engine(pixel_array)
-            ocr_results = raw_output[0] if isinstance(raw_output, tuple) else raw_output
-            if not ocr_results:
-                continue
-            for result_item in ocr_results:
-                _bbox, text, score = result_item[0], result_item[1], result_item[2]
-                if float(score) < 0.5:
-                    continue
-                stripped_text = _TOC_CLEAN_RE.sub('', str(text))
-                if not stripped_text.isdigit():
-                    continue
-                printed_number = int(stripped_text)
-                if not (1 <= printed_number <= 2000):
-                    continue
-                offset_candidate = page_index - printed_number
-                offset_votes[offset_candidate] = offset_votes.get(offset_candidate, 0) + 1
-    return offset_votes
-
-
 @app.post('/api/write_toc')
 def api_write_toc(pdf: UploadFile = File(...), toc: UploadFile = File(...),
                   first_pdf: str = Form(''), first_print: str = Form('')):
@@ -236,8 +156,7 @@ def api_write_toc(pdf: UploadFile = File(...), toc: UploadFile = File(...),
 
     偏移规则：
     - txt 全为 [p页号]：无需偏移
-    - txt 为印刷页码：必须提供偏移；未提供时后端自动检测（OCR扫页眉，约1-2分钟），
-      检测失败则拒绝并提示手动填写
+    - txt 为印刷页码：必须手动填写"正文第一页"的PDF页号和印刷页码
     """
     work_dir = tempfile.mkdtemp(prefix='web_toc_')
     try:
@@ -245,7 +164,6 @@ def api_write_toc(pdf: UploadFile = File(...), toc: UploadFile = File(...),
         txt_path = _save_upload(toc, work_dir, 'toc.txt')
         _validate_toc_lines(txt_path)
         offset = 0
-        auto_detected = False
         first_pdf_no = _parse_optional_int(first_pdf, '正文第一页的PDF页号')
         first_print_no = _parse_optional_int(first_print, '正文第一页的印刷页码')
         if (first_pdf_no is None) != (first_print_no is None):
@@ -255,21 +173,12 @@ def api_write_toc(pdf: UploadFile = File(...), toc: UploadFile = File(...),
         if first_pdf_no is not None:
             offset = first_pdf_no - 1 - first_print_no
         elif not uses_pdf_pages:
-            ocr_module = _load_ocr_module()
-            with _OCR_LOCK:
-                engine = ocr_module.load_ocr()
-                offset = _auto_detect_offset(pdf_path, ocr_module, engine)
-            if offset is None:
-                raise HTTPException(400, '无法自动检测偏移，请手动填写"正文第一页"的PDF页号和印刷页码')
-            auto_detected = True
+            raise HTTPException(400, 'txt 为印刷页码格式，必须填写"正文第一页"的PDF页号和印刷页码')
         toc_entries = core.build_toc(parsed_entries, offset)
         output_path = core.write_toc(pdf_path, toc_entries, 'copy')
-        response = FileResponse(output_path, filename=os.path.basename(output_path),
-                                media_type='application/pdf',
-                                background=lambda: _cleanup_work_dir(work_dir))
-        if auto_detected:
-            response.headers['X-Pdf-Offset'] = str(offset)
-        return response
+        return FileResponse(output_path, filename=os.path.basename(output_path),
+                            media_type='application/pdf',
+                            background=lambda: _cleanup_work_dir(work_dir))
     except HTTPException:
         _cleanup_work_dir(work_dir)
         raise
@@ -342,19 +251,27 @@ def api_extract_images(file: UploadFile = File(...),
 
 
 @app.post('/api/ocr_toc')
-def api_ocr_toc(file: UploadFile = File(...), page_range: str = Form('')):
-    """OCR识别目录页：上传文件+页号范围，返回目录txt下载（行尾点线+印刷页码，含#提示行）"""
+def api_ocr_toc(file: UploadFile = File(...), page_range: str = Form(''),
+                first_pdf: str = Form(''), first_print: str = Form('')):
+    """OCR识别目录页：必须填正文第一页PDF页号+印刷页码计算偏移，输出行尾[pN]（PDF页号免偏移）"""
     work_dir = tempfile.mkdtemp(prefix='web_ocr_')
     try:
         file_path = _save_upload(file, work_dir, os.path.basename(file.filename or 'book.pdf'))
         if os.path.splitext(file_path)[1].lower() not in core.OCR_EXTENSIONS:
             raise HTTPException(400, 'OCR识别仅支持PDF/EPUB/MOBI文件')
         start_page, end_page = _parse_required_range(page_range)
+        first_pdf_no = _parse_optional_int(first_pdf, '正文第一页的PDF页号')
+        first_print_no = _parse_optional_int(first_print, '正文第一页的印刷页码')
+        if first_pdf_no is None or first_print_no is None:
+            raise HTTPException(400, '识别目录必须填写"正文第一页"的PDF页号和印刷页码，用于计算偏移')
+        offset = first_pdf_no - 1 - first_print_no
         ocr_module = _load_ocr_module()
         with _OCR_LOCK:
             engine = ocr_module.load_ocr()
-            text = ocr_module.ocr_to_txt(file_path, start_page, end_page, ocr=engine)
-            text = ocr_module.apply_first_line_page_fallback(text, start_page)
+            text = ocr_module.ocr_to_txt(file_path, start_page, end_page, ocr=engine,
+                                         offset=offset)
+            text = ocr_module.apply_first_line_page_fallback(text, start_page,
+                                                             pdf_pages=True)
         output_path = os.path.join(work_dir, 'OCR目录.txt')
         with open(output_path, 'w', encoding='utf-8') as file_handle:
             file_handle.write(text)

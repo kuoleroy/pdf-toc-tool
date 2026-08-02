@@ -247,11 +247,18 @@ def _extract_entries(pdf_path: str, start_page: int, end_page: int, ocr_engine, 
     return extracted_entries
 
 
-def _format_page_number(start_number: Optional[int], end_number: Optional[int]) -> str:
-    """印刷页码格式化：以起始页码为准（识别的范围如 19-22 只取 19）；无页码返回空串"""
+def _format_page_number(start_number: Optional[int], end_number: Optional[int],
+                        offset: Optional[int] = None) -> str:
+    """印刷页码格式化：以起始页码为准（识别的范围如 19-22 只取 19）
+
+    offset 提供时输出 [pN]（PDF页号 = 印刷页码 + offset + 1，写入书签免偏移）；
+    否则输出印刷页码数字。无页码返回空串。
+    """
     if start_number is None:
         return ''
-    return str(start_number)
+    if offset is None:
+        return str(start_number)
+    return '[p%d]' % (start_number + offset + 1)
 
 
 def _split_glued_page_numbers(glued_text: str) -> Optional[Tuple[int, int]]:
@@ -279,15 +286,17 @@ def _append_low_confidence(output_lines: List[str], text: str, score: float) -> 
         output_lines.append(text)
 
 
-def apply_first_line_page_fallback(ocr_text: str, fallback_page: int) -> str:
+def apply_first_line_page_fallback(ocr_text: str, fallback_page: int,
+                                   pdf_pages: bool = False) -> str:
     """OCR结果首行页码无条件以输入范围开头为准（不管OCR识别到没有）
 
     回退页码取"输入范围的开头"（用户以输入开头为基准）：
     目录首条通常对应正文起始，补上后配合偏移即可定位到正文首页。
+    pdf_pages=True 时输出 [pN]（PDF页号免偏移）；否则输出印刷页码数字。
     处理两类首行：
       1. "# 无页码(...): 标题" 提示行 -> 去掉前缀并在标题后补页码
       2. 普通标题行 -> 行尾页码替换为范围开头；无页码则补上
-    以 # 开头的其他提示行（缺标题/低置信度）保持原样，不处理。
+    以 # 开头的其他提示行（缺标题/低置信度）与写死的"目录"行保持原样。
     """
     output_lines = ocr_text.split('\n')
     for line_index, line in enumerate(output_lines):
@@ -299,8 +308,9 @@ def apply_first_line_page_fallback(ocr_text: str, fallback_page: int) -> str:
                 title_with_indent = no_page_match.group(1).rstrip()
                 # 保留行首全角缩进（层级信息），仅去尾部空白
                 if title_with_indent.strip():
-                    output_lines[line_index] = '%s ..... %d' % (title_with_indent,
-                                                                fallback_page)
+                    output_lines[line_index] = '%s ..... [p%d]' % (title_with_indent,
+                                                                   fallback_page) \
+                        if pdf_pages else '%s ..... %d' % (title_with_indent, fallback_page)
             break
         # 写死的"目录"行（[p范围开头]，PDF页号免偏移）：跳过，不参与页码回退
         if re.match(r'^\s*目\s*录\s*[….…]*\s*\[p\d+\]\s*$', line):
@@ -308,22 +318,25 @@ def apply_first_line_page_fallback(ocr_text: str, fallback_page: int) -> str:
         if re.search(r'\d+\s*$', line):
             # 行尾已有页码：无条件替换为范围开头
             output_lines[line_index] = re.sub(
-                r'(\s*[…\.]*)\d+\s*$',
-                lambda match: match.group(1) + str(fallback_page), line)
+                r'(\s*[…\.]*)\[p\d+\]\s*$' if pdf_pages else r'(\s*[…\.]*)\d+\s*$',
+                lambda match: match.group(1) + ('[p%d]' % fallback_page if pdf_pages
+                                                else str(fallback_page)), line)
         else:
-            output_lines[line_index] = '%s ..... %d' % (line.rstrip(), fallback_page)
+            output_lines[line_index] = '%s ..... [p%d]' % (line.rstrip(), fallback_page) \
+                if pdf_pages else '%s ..... %d' % (line.rstrip(), fallback_page)
         break
     return '\n'.join(output_lines)
 
 
 def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int = OCR_DPI_DEFAULT,
                progress: Optional[Callable] = None, cancel_event=None,
-               pause_event=None) -> str:
-    """OCR目录页(PDF页号) -> 缩进式txt文本（全角空格缩进 + 标题 + 点线 + 印刷页码）
+               pause_event=None, offset: Optional[int] = None) -> str:
+    """OCR目录页(PDF页号) -> 缩进式txt文本（全角空格缩进 + 标题 + 点线 + 页码）
 
     ocr 可传入已加载的引擎实例（load_ocr()），否则自动加载。
     说明：# 开头为提示行（无页码/缺标题/低置信度/页码异常），可删除或修改。
-    行尾数字为印刷页码（用点线分隔，区别于提取书签的 [p页码] PDF页号），写入书签时需偏移。
+    offset 提供时行尾输出 [pN]（PDF页号，写入书签免偏移）；否则输出印刷页码数字
+    （写入书签时需偏移）。"目录"行无条件写死为 [p范围开头]（PDF页号）。
     """
     if ocr is None:
         ocr = load_ocr()
@@ -356,18 +369,18 @@ def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int
                 start_number, end_number = split_result
             else:
                 output_lines.append('# 页码异常(第%d页): %s %s' % (
-                    page_number, title or '?', _format_page_number(start_number, end_number)))
+                    page_number, title or '?', _format_page_number(start_number, end_number, offset)))
                 continue
         if start_number < PAGE_NUMBER_MIN or end_number > PAGE_NUMBER_MAX \
                 or start_number > end_number:
             output_lines.append('# 页码异常(第%d页): %s %s' % (
-                page_number, title or '?', _format_page_number(start_number, end_number)))
+                page_number, title or '?', _format_page_number(start_number, end_number, offset)))
             continue
         # 行首符号清洗（"-95 115" -> "95 115"）；清洗后纯数字视为无标题（页码被拆分）
         title = RE_LEADING_SYMBOLS.sub('', title).strip()
         if title and not title.isdigit():
             line_text = '%s%s ..... %s' % ('　' * indent_level, title,
-                                           _format_page_number(start_number, end_number))
+                                           _format_page_number(start_number, end_number, offset))
             _append_low_confidence(output_lines, line_text, score)
             last_titled_entry = (page_number, len(output_lines) - 1,
                                  indent_level, title, True)
@@ -381,15 +394,15 @@ def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int
                 existing_line = output_lines[line_index]
                 if existing_line.startswith('# 无页码'):
                     new_line = '%s%s ..... %s' % ('　' * merge_indent, merge_title,
-                                                  _format_page_number(start_number, end_number))
+                                                  _format_page_number(start_number, end_number, offset))
                 else:
                     new_line = '%s %s' % (existing_line.rstrip(),
-                                          _format_page_number(start_number, end_number))
+                                          _format_page_number(start_number, end_number, offset))
                 _append_low_confidence(output_lines, new_line, score)
                 last_titled_entry = (page_number, line_index, merge_indent, merge_title, True)
             else:
                 output_lines.append('# 缺标题(第%d页): %s' % (
-                    page_number, _format_page_number(start_number, end_number)))
+                    page_number, _format_page_number(start_number, end_number, offset)))
     # 无条件写死"目录"标题行（识别到了也被覆盖）：页码用[p范围开头]（PDF页号，免偏移）
     output_lines.insert(0, '目录 ..... [p%d]' % start_page)
     return '\n'.join(output_lines) + '\n'

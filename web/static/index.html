@@ -33,7 +33,7 @@
   <div class="row"><label>正文第一页:</label>
     <input type="text" id="w_pdf_no" placeholder="PDF页号(可空)" size="10">
     <input type="text" id="w_print_no" placeholder="印刷页码(可空)" size="10">
-    <span class="hint" id="w_offset_hint">先选txt：用[p页号]可留空，用印刷页码可留空(后端自动检测)</span>
+    <span class="hint" id="w_offset_hint">先选txt：用[p页号]可留空，用印刷页码须填"正文第一页"两个输入框</span>
   </div>
   <div class="row"><button id="w_btn">执行并下载 _带目录.pdf</button></div>
   <div class="status" id="w_status"></div>
@@ -83,6 +83,12 @@
   <div class="row"><label>页号范围:</label>
     <input type="text" id="o_range" placeholder="如 11-16" size="16">
     <span class="hint">PDF页号；仅PDF/EPUB/MOBI；首次识别自动下载模型（需联网，较慢）</span>
+  </div>
+  <div class="row"><label>正文第一页 PDF页号:</label>
+    <input type="text" id="o_pdf_no" size="8" style="width:60px">
+    <label>印刷页码:</label>
+    <input type="text" id="o_print_no" size="8" style="width:60px">
+    <span class="hint">识别目录必填，用于计算偏移量；识别文字可留空</span>
   </div>
   <div class="row">
     <button id="o_btn">识别目录</button>
@@ -147,10 +153,10 @@ document.getElementById('w_txt').addEventListener('change', function () {
       pdfNo.classList.remove('required');
       printNo.classList.remove('required');
     } else {
-      hint.textContent = 'txt 为印刷页码：留空则后端自动检测偏移(约1-2分钟)，也可手动填写';
+      hint.textContent = 'txt 为印刷页码：必须填写"正文第一页"的PDF页号和印刷页码';
       hint.className = 'hint';
-      pdfNo.classList.remove('required');
-      printNo.classList.remove('required');
+      pdfNo.classList.add('required');
+      printNo.classList.add('required');
     }
   };
   reader.readAsText(file, 'utf-8');
@@ -163,13 +169,7 @@ bindSubmit('w_btn', 'w_status', '/api/write_toc', function () {
   form.append('first_pdf', document.getElementById('w_pdf_no').value);
   form.append('first_print', document.getElementById('w_print_no').value);
   return form;
-}, function () { return '带目录.pdf'; }, function (headers) {
-  var offset = headers.get('X-Pdf-Offset');
-  if (offset !== null) {
-    var status = document.getElementById('w_status');
-    status.textContent = '完成，已开始下载。已自动检测偏移=' + offset;
-  }
-});
+}, function () { return '带目录.pdf'; });
 
 bindSubmit('e_btn', 'e_status', '/api/extract_toc', function () {
   var form = new FormData();
@@ -194,6 +194,8 @@ bindSubmit('o_btn', 'o_status', '/api/ocr_toc', function () {
   var form = new FormData();
   form.append('file', document.getElementById('o_file').files[0]);
   form.append('page_range', document.getElementById('o_range').value);
+  form.append('first_pdf', document.getElementById('o_pdf_no').value);
+  form.append('first_print', document.getElementById('o_print_no').value);
   return form;
 }, function () {
   var name = document.getElementById('o_file').files[0].name;
