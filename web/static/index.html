@@ -33,7 +33,7 @@
   <div class="row"><label>正文第一页:</label>
     <input type="text" id="w_pdf_no" placeholder="PDF页号(可空)" size="10">
     <input type="text" id="w_print_no" placeholder="印刷页码(可空)" size="10">
-    <span class="hint" id="w_offset_hint">先选txt：用[p页号]可留空，用印刷页码必须填</span>
+    <span class="hint" id="w_offset_hint">先选txt：用[p页号]可留空，用印刷页码可留空(后端自动检测)</span>
   </div>
   <div class="row"><button id="w_btn">执行并下载 _带目录.pdf</button></div>
   <div class="status" id="w_status"></div>
@@ -93,7 +93,8 @@
 </div>
 
 <script>
-function bindSubmit(btnId, statusId, url, buildForm, filenameHint) {  document.getElementById(btnId).addEventListener('click', function () {
+function bindSubmit(btnId, statusId, url, buildForm, filenameHint, onOk) {
+  document.getElementById(btnId).addEventListener('click', function () {
     var btn = this, status = document.getElementById(statusId);
     btn.disabled = true;
     status.className = 'status';
@@ -106,17 +107,20 @@ function bindSubmit(btnId, statusId, url, buildForm, filenameHint) {  document.g
             throw new Error(data.detail || ('HTTP ' + resp.status));
           });
         }
-        return resp.blob();
+        return resp.blob().then(function (blob) {
+          return { blob: blob, headers: resp.headers };
+        });
       })
-      .then(function (blob) {
+      .then(function (result) {
         var link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
+        link.href = URL.createObjectURL(result.blob);
         link.download = filenameHint();
         document.body.appendChild(link);
         link.click();
         URL.revokeObjectURL(link.href);
         status.className = 'status';
         status.textContent = '完成，已开始下载。';
+        if (onOk) onOk(result.headers);
       })
       .catch(function (err) {
         status.className = 'status error';
@@ -125,7 +129,6 @@ function bindSubmit(btnId, statusId, url, buildForm, filenameHint) {  document.g
       .then(function () { btn.disabled = false; });
   });
 }
-
 // 根据目录txt是否用[p页号]，提示正文第一页两个输入框是否必填
 document.getElementById('w_txt').addEventListener('change', function () {
   var file = this.files[0];
@@ -137,15 +140,15 @@ document.getElementById('w_txt').addEventListener('change', function () {
     var pdfNo = document.getElementById('w_pdf_no');
     var printNo = document.getElementById('w_print_no');
     if (hasPdfPage) {
-      hint.textContent = 'txt 已用 [p页号]，可留空';
+      hint.textContent = 'txt 已用 [p页号]，无需偏移';
       hint.className = 'hint ok';
       pdfNo.classList.remove('required');
       printNo.classList.remove('required');
     } else {
-      hint.textContent = 'txt 为印刷页码，必须填写两个框！';
-      hint.className = 'hint warn';
-      pdfNo.classList.add('required');
-      printNo.classList.add('required');
+      hint.textContent = 'txt 为印刷页码：留空则后端自动检测偏移(约1-2分钟)，也可手动填写';
+      hint.className = 'hint';
+      pdfNo.classList.remove('required');
+      printNo.classList.remove('required');
     }
   };
   reader.readAsText(file, 'utf-8');
@@ -158,7 +161,13 @@ bindSubmit('w_btn', 'w_status', '/api/write_toc', function () {
   form.append('first_pdf', document.getElementById('w_pdf_no').value);
   form.append('first_print', document.getElementById('w_print_no').value);
   return form;
-}, function () { return '带目录.pdf'; });
+}, function () { return '带目录.pdf'; }, function (headers) {
+  var offset = headers.get('X-Pdf-Offset');
+  if (offset !== null) {
+    var status = document.getElementById('w_status');
+    status.textContent = '完成，已开始下载。已自动检测偏移=' + offset;
+  }
+});
 
 bindSubmit('e_btn', 'e_status', '/api/extract_toc', function () {
   var form = new FormData();

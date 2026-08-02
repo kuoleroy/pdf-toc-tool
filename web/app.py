@@ -134,32 +134,142 @@ def _load_ocr_module():
     return ocr_module
 
 
+def _validate_toc_lines(txt_path: str) -> None:
+    """逐行校验目录txt：任何非注释行必须带页码（行尾[pN]或数字），无页码直接禁止写入"""
+    with open(txt_path, encoding='utf-8-sig') as file_handle:
+        for line_number, raw_line in enumerate(file_handle, 1):
+            line = raw_line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if re.search(r'\[p\s*\d+\]\s*$', line):
+                continue
+            if re.search(r'\d+\s*$', line):
+                continue
+            raise HTTPException(400, '目录txt第 %d 行没有页码，禁止写入: %s'
+                                     % (line_number, line[:40]))
+
+
+_TOC_CLEAN_RE = re.compile(r'[\s.·…‥⋯・︙。、，,．－\-—_—]')
+
+
+def _auto_detect_offset(file_path: str, ocr_module, engine) -> Optional[int]:
+    """扫描PDF前若干页页眉/页脚数字，投票得出印刷页码->PDF页偏移；失败返回None
+
+    优先用PDF文本层（页眉/页脚区域内的纯数字），无文本层的扫描件改走OCR条带。
+    """
+    import numpy as np
+    import fitz
+    doc = fitz.open(file_path)
+    try:
+        scan_count = min(30, doc.page_count)
+        text_total = sum(len(doc[i].get_text()) for i in range(min(5, doc.page_count)))
+        if text_total > 20:
+            offset_votes = _vote_text_band(doc, scan_count)
+        else:
+            offset_votes = _vote_ocr_band(doc, scan_count, ocr_module, engine)
+        if not offset_votes:
+            return None
+        best_offset, best_votes = max(offset_votes.items(), key=lambda item: item[1])
+        if best_votes >= 2 and 0 <= best_offset <= 300:
+            return best_offset
+        return None
+    finally:
+        doc.close()
+
+
+def _vote_text_band(doc, scan_count: int) -> dict:
+    """文本层：页眉/页脚区域内的纯数字文本投票"""
+    offset_votes: dict = {}
+    for page_index in range(scan_count):
+        page = doc[page_index]
+        for word in page.get_text('words'):
+            x0, y0, x1, y1, text = word[0], word[1], word[2], word[3], word[4]
+            if not str(text).isdigit():
+                continue
+            printed_number = int(text)
+            if not (1 <= printed_number <= 2000):
+                continue
+            if not (y1 <= page.rect.height * 0.15 or y0 >= page.rect.height * 0.85):
+                continue
+            offset_candidate = page_index - printed_number
+            offset_votes[offset_candidate] = offset_votes.get(offset_candidate, 0) + 1
+    return offset_votes
+
+
+def _vote_ocr_band(doc, scan_count: int, ocr_module, engine) -> dict:
+    """OCR条带：渲染页眉/页脚条带放大识别数字投票"""
+    import numpy as np
+    import fitz
+    offset_votes: dict = {}
+    for page_index in range(scan_count):
+        page = doc[page_index]
+        for band in (0.0, 0.85):
+            clip = fitz.Rect(0, page.rect.height * band, page.rect.width,
+                             page.rect.height * (band + 0.15))
+            pixmap = page.get_pixmap(dpi=ocr_module.OCR_DPI_DEFAULT * 2, clip=clip,
+                                     colorspace=fitz.csRGB, alpha=False)
+            pixel_array = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
+                pixmap.height, pixmap.width, 3)
+            raw_output = engine(pixel_array)
+            ocr_results = raw_output[0] if isinstance(raw_output, tuple) else raw_output
+            if not ocr_results:
+                continue
+            for result_item in ocr_results:
+                _bbox, text, score = result_item[0], result_item[1], result_item[2]
+                if float(score) < 0.5:
+                    continue
+                stripped_text = _TOC_CLEAN_RE.sub('', str(text))
+                if not stripped_text.isdigit():
+                    continue
+                printed_number = int(stripped_text)
+                if not (1 <= printed_number <= 2000):
+                    continue
+                offset_candidate = page_index - printed_number
+                offset_votes[offset_candidate] = offset_votes.get(offset_candidate, 0) + 1
+    return offset_votes
+
+
 @app.post('/api/write_toc')
 def api_write_toc(pdf: UploadFile = File(...), toc: UploadFile = File(...),
                   first_pdf: str = Form(''), first_print: str = Form('')):
-    """写入书签：上传PDF+目录txt，返回 _带目录.pdf 副本下载"""
+    """写入书签：上传PDF+目录txt，返回 _带目录.pdf 副本下载
+
+    偏移规则：
+    - txt 全为 [p页号]：无需偏移
+    - txt 为印刷页码：必须提供偏移；未提供时后端自动检测（OCR扫页眉，约1-2分钟），
+      检测失败则拒绝并提示手动填写
+    """
     work_dir = tempfile.mkdtemp(prefix='web_toc_')
     try:
         pdf_path = _save_upload(pdf, work_dir, os.path.basename(pdf.filename or 'book.pdf'))
         txt_path = _save_upload(toc, work_dir, 'toc.txt')
+        _validate_toc_lines(txt_path)
         offset = 0
+        auto_detected = False
         first_pdf_no = _parse_optional_int(first_pdf, '正文第一页的PDF页号')
         first_print_no = _parse_optional_int(first_print, '正文第一页的印刷页码')
         if (first_pdf_no is None) != (first_print_no is None):
             raise HTTPException(400, '正文第一页的PDF页号和印刷页码需同时填写或同时留空')
         parsed_entries = core.levels_from_indent(core.parse_toc(txt_path))
-        if first_pdf_no is None:
-            uses_pdf_pages = all(entry[2] == core.KIND_PDF_PAGE for entry in parsed_entries)
-            if not uses_pdf_pages:
-                raise HTTPException(400, '目录txt使用印刷页码，必须填写"正文第一页"的PDF页号和印刷页码'
-                                         '（或把txt改为[p页号]格式）')
-        else:
+        uses_pdf_pages = all(entry[2] == core.KIND_PDF_PAGE for entry in parsed_entries)
+        if first_pdf_no is not None:
             offset = first_pdf_no - 1 - first_print_no
+        elif not uses_pdf_pages:
+            ocr_module = _load_ocr_module()
+            with _OCR_LOCK:
+                engine = ocr_module.load_ocr()
+                offset = _auto_detect_offset(pdf_path, ocr_module, engine)
+            if offset is None:
+                raise HTTPException(400, '无法自动检测偏移，请手动填写"正文第一页"的PDF页号和印刷页码')
+            auto_detected = True
         toc_entries = core.build_toc(parsed_entries, offset)
         output_path = core.write_toc(pdf_path, toc_entries, 'copy')
-        return FileResponse(output_path, filename=os.path.basename(output_path),
-                            media_type='application/pdf',
-                            background=lambda: _cleanup_work_dir(work_dir))
+        response = FileResponse(output_path, filename=os.path.basename(output_path),
+                                media_type='application/pdf',
+                                background=lambda: _cleanup_work_dir(work_dir))
+        if auto_detected:
+            response.headers['X-Pdf-Offset'] = str(offset)
+        return response
     except HTTPException:
         _cleanup_work_dir(work_dir)
         raise
