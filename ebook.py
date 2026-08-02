@@ -59,11 +59,13 @@ def extract_toc(path: str) -> List[Tuple[int, str, int]]:
                      % (file_extension, ' / '.join(sorted(BOOK_EXTS))))
 
 
-def to_txt(toc_entries: List[Tuple[int, str, int]]) -> str:
-    """目录条目 -> txt 文本（缩进 + 标题 + [p序号]）"""
+def to_txt(toc_entries: List[Tuple[int, str, int]],
+           with_sequence: bool = True) -> str:
+    """目录条目 -> txt 文本（缩进 + 标题；with_sequence 时行尾带 [p序号]）"""
     output_lines = []
     for indent, title, sequence_number in toc_entries:
-        output_lines.append('  ' * indent + title + ' [p%d]' % sequence_number)
+        suffix = ' [p%d]' % sequence_number if with_sequence else ''
+        output_lines.append('  ' * indent + title + suffix)
     return '\n'.join(output_lines) + '\n'
 
 

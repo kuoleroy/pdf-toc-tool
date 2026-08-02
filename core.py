@@ -104,7 +104,7 @@ def _mp_extract_toc(q, path, page_fmt) -> None:
             entries = ebook.extract_toc(path)
             out = base_name + '_目录.txt'
             with open(out, 'w', encoding='utf-8') as file_handle:
-                file_handle.write(ebook.to_txt(entries))
+                file_handle.write(ebook.to_txt(entries, page_fmt))
             q.put(('extract_done', True, entries, out))
             return
         toc = read_toc(path)
