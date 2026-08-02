@@ -92,6 +92,28 @@ pyinstaller --onefile --windowed --noupx --collect-all rapidocr_onnxruntime --co
 
 详细步骤（含 Python 安装、常见问题、GitHub Actions 自动打包）见 [BUILD.md](BUILD.md)。
 
+## 网页版（本地部署）
+
+免安装的浏览器版本（复用同一套核心逻辑），代码在 `web/` 目录：
+
+```bash
+cd web
+pip install -r requirements.txt
+uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+浏览器打开 `http://127.0.0.1:8000`（本机）；局域网内其他设备用 `http://<本机IP>:8000`。
+只在本机使用可把 `--host 0.0.0.0` 改为 `--host 127.0.0.1`（更安全，外部访问不到）。
+
+功能：写入书签（上传 PDF + 目录txt）、提取书签/电子书目录、提取图片（内嵌或按分辨率渲染）、
+OCR 识别目录/文字（首次识别自动下载模型，需联网；同一时间只跑一个 OCR 任务）。
+
+注意事项：
+- 上传文件上限 500MB；临时文件在响应下载完成后自动清理
+- OCR 依赖 numpy / rapidocr-onnxruntime（已包含在 `web/requirements.txt`），
+  首次识别较慢（下载模型），识别过程请耐心等待
+- 单个请求处理大文件时需等待数分钟，浏览器页面会显示"处理中"
+
 ## 目录 txt 格式
 
 层级由行首缩进决定：无缩进 = 1 级，1 级缩进 = 2 级，2 级及以上 = 3 级
