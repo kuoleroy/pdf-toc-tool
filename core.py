@@ -4,6 +4,7 @@ import hashlib
 import os
 import re
 import shutil
+import struct
 import time
 import zipfile
 from typing import Callable, List, Optional, Tuple
@@ -22,6 +23,8 @@ DPI_MAX = 1000
 IMAGE_FORMATS = frozenset({'orig', 'png', 'jpeg'})
 EXTENSION_BY_FORMAT = {'png': 'png', 'jpeg': 'jpg', 'orig': ''}
 EPUB_EXTENSION = '.epub'         # EPUB内嵌图片走zip解压提取（HTML/SVG引用的位图）
+MOBI_EXTENSIONS = frozenset({'.mobi', '.azw3', '.prc'})  # PalmDB结构的电子书
+EBOOK_INLINE_EXTENSIONS = MOBI_EXTENSIONS | {EPUB_EXTENSION}  # 内嵌模式走特殊提取的电子书
 IMAGE_FILE_EXTENSIONS = frozenset({'.jpg', '.jpeg', '.png', '.gif', '.webp',
                                    '.bmp', '.svg', '.tif', '.tiff'})
 
@@ -243,6 +246,7 @@ def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[i
     - cancel_event/pause_event：threading.Event，支持停止/暂停（页间生效）
     - start_page/end_page：限定提取的页号范围（1-based，含边界），None=全部
     - EPUB 内嵌模式（dpi=None）：解压zip提取图片文件，仅支持orig原样，忽略页号范围
+    - MOBI/AZW3/PRC 内嵌模式（dpi=None）：解析PalmDB记录按文件头识别图片，仅orig原样
     - EPUB/MOBI 渲染模式（dpi=整数）：按页渲染（受文件格式支持程度限制）
     """
     fmt = (fmt or 'orig').lower()
@@ -263,11 +267,15 @@ def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[i
         out_dir = base_name + IMAGE_OUTPUT_SUFFIX
     os.makedirs(out_dir, exist_ok=True)
     file_ext = os.path.splitext(pdf_path)[1].lower()
-    if file_ext == EPUB_EXTENSION and not dpi:
+    if file_ext in EBOOK_INLINE_EXTENSIONS and not dpi:
         if fmt != 'orig':
-            raise ValueError('EPUB内嵌提取仅支持原样保存（格式orig）')
-        image_count = _export_epub_images(pdf_path, out_dir, progress,
-                                          cancel_event, pause_event)
+            raise ValueError('%s内嵌提取仅支持原样保存（格式orig）' % file_ext[1:].upper())
+        if file_ext == EPUB_EXTENSION:
+            image_count = _export_epub_images(pdf_path, out_dir, progress,
+                                              cancel_event, pause_event)
+        else:
+            image_count = _export_mobi_images(pdf_path, out_dir, progress,
+                                              cancel_event, pause_event)
         return out_dir, image_count
     try:
         doc = fitz.open(pdf_path)
@@ -325,6 +333,59 @@ def _export_epub_images(epub_path: str, out_dir: str, progress: Optional[Callabl
             exported_count += 1
             if progress:
                 progress(index + 1, total_count, '提取图片 %d/%d' % (index + 1, total_count))
+    return exported_count
+
+
+def _detect_image_format(data: bytes) -> Optional[str]:
+    """按文件头识别图片格式：jpg/gif/png/bmp，无法识别返回None"""
+    if data[:3] == b'\xff\xd8\xff':
+        return 'jpg'
+    if data[:4] == b'GIF8':
+        return 'gif'
+    if data[:4] == b'\x89PNG':
+        return 'png'
+    if data[:2] == b'BM':
+        return 'bmp'
+    return None
+
+
+def _export_mobi_images(mobi_path: str, out_dir: str, progress: Optional[Callable],
+                        cancel_event, pause_event) -> int:
+    """MOBI/AZW3/PRC：解析PalmDB记录，按文件头识别图片并提取（内容MD5去重）
+
+    MOBI/AZW3 的图片以整条PalmDB记录存储（无统一索引字段时按内容识别最可靠）；
+    封面/插图记录开头即图片文件头（JPEG/GIF/PNG/BMP），其余记录跳过。
+    """
+    with open(mobi_path, 'rb') as file_handle:
+        palm_data = file_handle.read()
+    if len(palm_data) < 78 or palm_data[60:64] != b'BOOK':
+        raise ValueError('无法打开文件: %s（不是有效的MOBI/AZW3文件）'
+                         % os.path.basename(mobi_path))
+    record_count = struct.unpack('>H', palm_data[76:78])[0]
+    record_offsets = []
+    for index in range(record_count):
+        offset = struct.unpack('>I', palm_data[78 + index * 8: 82 + index * 8])[0]
+        record_offsets.append(offset)
+    saved_digest_set = set()
+    exported_count = 0
+    for index in range(record_count):
+        check_task(cancel_event, pause_event)
+        if progress:
+            progress(index + 1, record_count, '扫描记录 %d/%d' % (index + 1, record_count))
+        start = record_offsets[index]
+        end = record_offsets[index + 1] if index + 1 < record_count else len(palm_data)
+        record_data = palm_data[start:end]
+        image_format = _detect_image_format(record_data)
+        if image_format is None:
+            continue
+        digest = hashlib.md5(record_data).hexdigest()
+        if digest in saved_digest_set:
+            continue
+        saved_digest_set.add(digest)
+        exported_count += 1
+        file_name = '图片%03d.%s' % (exported_count, image_format)
+        with open(os.path.join(out_dir, file_name), 'wb') as target_file:
+            target_file.write(record_data)
     return exported_count
 
 
