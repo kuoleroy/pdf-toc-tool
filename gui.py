@@ -422,6 +422,7 @@ class App:
             self.logln('已保存到: %s' % output_path)
             messagebox.showinfo('完成', '已提取 %d 条%s\n%s' % (
                 len(extracted_entries), '目录' if is_ebook else '书签', output_path))
+            self._open_folder(os.path.dirname(output_path))
         elif message_kind == 'extract_none':
             self._task_end()
             self.logln('该PDF没有书签。')
