@@ -99,13 +99,6 @@ class App:
         self.outmode_var = tk.StringVar(value='copy')
         self.write_options = ttk.Frame(action_options_frame)
         self.write_options.pack(side='left', padx=12)
-        ttk.Label(self.write_options, text='正文第一页 PDF页号:').pack(side='left')
-        self.first_pdf_var = tk.StringVar()
-        ttk.Entry(self.write_options, textvariable=self.first_pdf_var, width=5).pack(side='left', padx=4)
-        ttk.Label(self.write_options, text='印刷页码:').pack(side='left')
-        self.first_print_var = tk.StringVar()
-        ttk.Entry(self.write_options, textvariable=self.first_print_var, width=5).pack(side='left', padx=4)
-        self.hint(self.write_options, '目录后第一个正文页，两项必填，自动算偏移').pack(side='left', padx=4)
         ttk.Radiobutton(self.write_options, text='生成_带目录.pdf副本', variable=self.outmode_var,
                         value='copy').pack(side='left')
         ttk.Radiobutton(self.write_options, text='直接写原文件', variable=self.outmode_var,
@@ -160,8 +153,19 @@ class App:
         # 每页加[第N页]标记 复选框：暂注释隐藏，后续改为弹框控制
         # ttk.Checkbutton(row_frame, text='每页加[第N页]标记',
         #                 variable=self.ocr_page_mark_var).pack(side='left', padx=8)
-        self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[识别目录]需先在"2.操作"填正文第一页PDF页号与印刷页码；'
+        self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[识别目录]需先填下方"正文第一页"两框；'
                   '[导入AI文本]粘贴外部AI识别的目录并格式化为标准txt；结果可编辑后[确认写入]或[保存OCR结果…]',
+                  wrap=430).pack(side='left', padx=8)
+
+        offset_row = ttk.Frame(ocr_frame)
+        offset_row.pack(fill='x', **PADDING)
+        ttk.Label(offset_row, text='正文第一页 PDF页号:').pack(side='left')
+        self.first_pdf_var = tk.StringVar()
+        ttk.Entry(offset_row, textvariable=self.first_pdf_var, width=8).pack(side='left', padx=4)
+        ttk.Label(offset_row, text='印刷页码:').pack(side='left')
+        self.first_print_var = tk.StringVar()
+        ttk.Entry(offset_row, textvariable=self.first_print_var, width=8).pack(side='left', padx=4)
+        self.hint(offset_row, '目录后第一个正文页，识别目录/写书签共用，必填，自动算偏移',
                   wrap=430).pack(side='left', padx=8)
 
         # 进度条与按钮行放在日志区之前，窗口缩小时不遮挡操作按钮
@@ -690,8 +694,8 @@ class App:
             pdf_path, start_page, end_page = ocr_args
             offset = self._field_offset()
             if offset is None:
-                self.logln('已取消：识别目录必须在"2.操作"填写正文第一页的PDF页号和印刷页码')
-                messagebox.showwarning('识别目录', '请先在"2.操作"填写正文第一页的PDF页号和印刷页码')
+                self.logln('已取消：识别目录必须先填写"正文第一页"的PDF页号和印刷页码')
+                messagebox.showwarning('识别目录', '请先填写"正文第一页"的PDF页号和印刷页码')
                 return
             self._last_ocr_type = 'toc'
             self.logln('加载OCR引擎并识别目录 PDF页 %d-%d（偏移=%d）…（首次运行下载模型，约需几分钟）'
