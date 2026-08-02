@@ -424,6 +424,7 @@ class App:
             _kind, output_path, bookmark_count = message
             self.logln('写入完成: %s（%d 条书签）' % (output_path, bookmark_count))
             messagebox.showinfo('完成', '已写入 %d 条书签\n%s' % (bookmark_count, output_path))
+            self._open_folder(os.path.dirname(output_path))
         elif message_kind == 'extract_done':
             self._task_end()
             _kind, is_ebook, extracted_entries, output_path = message
