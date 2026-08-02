@@ -112,9 +112,12 @@ class App:
         self.extract_options = ttk.Frame(action_options_frame)
         self.extract_options.pack(side='left', padx=12)
         self.e_pdfpage = tk.BooleanVar(value=True)
-        ttk.Checkbutton(self.extract_options, text='行尾带[PDF页号]',
-                        variable=self.e_pdfpage).pack(side='left')
+        self.e_pdfpage_check = ttk.Checkbutton(self.extract_options,
+                                               text='行尾带[PDF页号]',
+                                               variable=self.e_pdfpage)
+        self.e_pdfpage_check.pack(side='left')
         self.hint(self.extract_options, 'EPUB/MOBI无页码,[p序号]=阅读顺序').pack(side='left', padx=4)
+        self.pdf_var.trace_add('write', self._on_pdf_file_changed)
         self.extract_options.pack_forget()
         self.image_options = ttk.Frame(action_options_frame)
         self.image_options.pack(side='left', padx=12)
@@ -545,6 +548,14 @@ class App:
             self.fmt_var.set('orig')
         elif resolution_text.isdigit():
             self.fmt_var.set('jpeg')
+
+    def _on_pdf_file_changed(self, *_args) -> None:
+        """所选文件变化时联动"行尾带[…]号"文案：电子书无页码，[p序号]=阅读顺序"""
+        file_ext = os.path.splitext(self.pdf_var.get().strip())[1].lower()
+        if file_ext in core.EBOOK_INLINE_EXTENSIONS:
+            self.e_pdfpage_check.configure(text='行尾带[阅读顺序号]')
+        else:
+            self.e_pdfpage_check.configure(text='行尾带[PDF页号]')
 
     def _parse_image_page_range(self) -> Optional[Tuple[int, int]]:
         """解析图片页号范围输入：空=None(全部)，"12-30"=区间，"12"=单页"""
