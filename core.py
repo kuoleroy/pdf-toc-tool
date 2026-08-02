@@ -2,6 +2,7 @@
 """核心逻辑：目录txt解析、书签写入/提取、txt导出、图片提取"""
 import hashlib
 import os
+import posixpath
 import re
 import shutil
 import struct
@@ -245,7 +246,8 @@ def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[i
     - quality：JPEG质量(1-100)；progress(done, total, msg)：进度回调
     - cancel_event/pause_event：threading.Event，支持停止/暂停（页间生效）
     - start_page/end_page：限定提取的页号范围（1-based，含边界），None=全部
-    - EPUB 内嵌模式（dpi=None）：解压zip提取图片文件，仅支持orig原样，忽略页号范围
+    - EPUB 内嵌模式（dpi=None）：解压zip提取图片文件，仅支持orig原样；
+      电子书无固定页码，页号范围按图片出现顺序（EPUB=阅读顺序，MOBI/AZW3/PRC=记录顺序）
     - MOBI/AZW3/PRC 内嵌模式（dpi=None）：解析PalmDB记录按文件头识别图片，仅orig原样
     - EPUB/MOBI 渲染模式（dpi=整数）：按页渲染（受文件格式支持程度限制）
     """
@@ -272,10 +274,12 @@ def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[i
             raise ValueError('%s内嵌提取仅支持原样保存（格式orig）' % file_ext[1:].upper())
         if file_ext == EPUB_EXTENSION:
             image_count = _export_epub_images(pdf_path, out_dir, progress,
-                                              cancel_event, pause_event)
+                                              cancel_event, pause_event,
+                                              start_page, end_page)
         else:
             image_count = _export_mobi_images(pdf_path, out_dir, progress,
-                                              cancel_event, pause_event)
+                                              cancel_event, pause_event,
+                                              start_page, end_page)
         return out_dir, image_count
     try:
         doc = fitz.open(pdf_path)
@@ -310,9 +314,81 @@ def _dedupe_output_name(base_name: str, saved_names: set) -> str:
         index += 1
 
 
+def _collect_epub_image_paths(zip_file) -> List[str]:
+    """按阅读顺序收集EPUB内图片路径（spine文档中<img>的引用顺序，去重），
+    未被HTML引用的位图文件按名字顺序排在最后；无法解析OPF时退化为namelist顺序"""
+    def is_image(name):
+        return os.path.splitext(name)[1].lower() in IMAGE_FILE_EXTENSIONS
+
+    opf_path = None
+    try:
+        with zip_file.open('META-INF/container.xml') as container_file:
+            container_xml = container_file.read().decode('utf-8', 'replace')
+        root_match = re.search(r'<rootfile[^>]*full-path=["\']([^"\']+)["\']',
+                               container_xml, re.I)
+        if root_match:
+            opf_path = root_match.group(1)
+    except KeyError:
+        pass
+    if opf_path is None:
+        opf_candidates = [name for name in zip_file.namelist()
+                          if name.lower().endswith('.opf')]
+        opf_path = opf_candidates[0] if opf_candidates else None
+    if opf_path is None:
+        return sorted(name for name in zip_file.namelist() if is_image(name))
+    opf_dir = posixpath.dirname(opf_path)
+    try:
+        with zip_file.open(opf_path) as opf_file:
+            opf_xml = opf_file.read().decode('utf-8', 'replace')
+    except (KeyError, zipfile.BadZipFile):
+        return sorted(name for name in zip_file.namelist() if is_image(name))
+    manifest = {}
+    for item_match in re.finditer(r'<item\b[^>]*>', opf_xml, re.I):
+        item_tag = item_match.group(0)
+        ident_match = re.search(r'\bid=["\']([^"\']+)["\']', item_tag, re.I)
+        href_match = re.search(r'\bhref=["\']([^"\']+)["\']', item_tag, re.I)
+        if ident_match and href_match:
+            manifest[ident_match.group(1)] = href_match.group(1)
+    ordered_paths = []
+    for itemref_match in re.finditer(r'<itemref\b[^>]*idref=["\']([^"\']+)["\']',
+                                     opf_xml, re.I):
+        href = manifest.get(itemref_match.group(1))
+        if not href:
+            continue
+        doc_path = posixpath.normpath(posixpath.join(opf_dir, href))
+        if doc_path not in zip_file.namelist() \
+                or not doc_path.lower().endswith(('.html', '.htm', '.xhtml')):
+            continue
+        try:
+            with zip_file.open(doc_path) as html_file:
+                html_text = html_file.read().decode('utf-8', 'replace')
+        except (KeyError, zipfile.BadZipFile):
+            continue
+        for src_match in re.finditer(r'<img\b[^>]*src=["\']([^"\']+)["\']',
+                                     html_text, re.I):
+            image_path = posixpath.normpath(
+                posixpath.join(posixpath.dirname(doc_path), src_match.group(1)))
+            if image_path in zip_file.namelist() and is_image(image_path):
+                ordered_paths.append(image_path)
+    referenced = []
+    seen = set()
+    for path in ordered_paths:
+        if path not in seen:
+            seen.add(path)
+            referenced.append(path)
+    leftovers = sorted(name for name in zip_file.namelist()
+                       if is_image(name) and name not in seen)
+    return referenced + leftovers
+
+
 def _export_epub_images(epub_path: str, out_dir: str, progress: Optional[Callable],
-                        cancel_event, pause_event) -> int:
-    """EPUB：解压zip中的图片文件（HTML/SVG引用的位图）原样保存，返回导出数"""
+                        cancel_event, pause_event,
+                        start_page: Optional[int] = None,
+                        end_page: Optional[int] = None) -> int:
+    """EPUB：解压zip中的图片文件（HTML/SVG引用的位图）原样保存，返回导出数。
+
+    电子书无固定页码，页号范围按图片出现顺序（阅读顺序），1-based 含边界。
+    """
     try:
         zip_file = zipfile.ZipFile(epub_path)
     except zipfile.BadZipFile:
@@ -321,10 +397,13 @@ def _export_epub_images(epub_path: str, out_dir: str, progress: Optional[Callabl
     saved_names = set()
     exported_count = 0
     with zip_file:
-        image_names = [name for name in zip_file.namelist()
-                       if os.path.splitext(name)[1].lower() in IMAGE_FILE_EXTENSIONS]
+        image_names = _collect_epub_image_paths(zip_file)
         total_count = len(image_names)
+        start_index = 0 if start_page is None else max(start_page - 1, 0)
+        end_index = total_count if end_page is None else min(end_page, total_count)
         for index, name in enumerate(image_names):
+            if index < start_index or index >= end_index:
+                continue
             check_task(cancel_event, pause_event)
             output_name = _dedupe_output_name(os.path.basename(name), saved_names)
             with zip_file.open(name) as source_file:
@@ -332,7 +411,9 @@ def _export_epub_images(epub_path: str, out_dir: str, progress: Optional[Callabl
                     shutil.copyfileobj(source_file, target_file)
             exported_count += 1
             if progress:
-                progress(index + 1, total_count, '提取图片 %d/%d' % (index + 1, total_count))
+                progress(index - start_index + 1, end_index - start_index,
+                         '提取图片 %d/%d' % (index - start_index + 1,
+                                            end_index - start_index))
     return exported_count
 
 
@@ -350,11 +431,14 @@ def _detect_image_format(data: bytes) -> Optional[str]:
 
 
 def _export_mobi_images(mobi_path: str, out_dir: str, progress: Optional[Callable],
-                        cancel_event, pause_event) -> int:
+                        cancel_event, pause_event,
+                        start_page: Optional[int] = None,
+                        end_page: Optional[int] = None) -> int:
     """MOBI/AZW3/PRC：解析PalmDB记录，按文件头识别图片并提取（内容MD5去重）
 
     MOBI/AZW3 的图片以整条PalmDB记录存储（无统一索引字段时按内容识别最可靠）；
     封面/插图记录开头即图片文件头（JPEG/GIF/PNG/BMP），其余记录跳过。
+    电子书无固定页码，页号范围按图片记录出现顺序（1-based 含边界，含重复记录计数）。
     """
     with open(mobi_path, 'rb') as file_handle:
         palm_data = file_handle.read()
@@ -368,6 +452,7 @@ def _export_mobi_images(mobi_path: str, out_dir: str, progress: Optional[Callabl
         record_offsets.append(offset)
     saved_digest_set = set()
     exported_count = 0
+    detected_index = 0
     for index in range(record_count):
         check_task(cancel_event, pause_event)
         if progress:
@@ -377,6 +462,11 @@ def _export_mobi_images(mobi_path: str, out_dir: str, progress: Optional[Callabl
         record_data = palm_data[start:end]
         image_format = _detect_image_format(record_data)
         if image_format is None:
+            continue
+        detected_index += 1
+        if start_page is not None and detected_index < start_page:
+            continue
+        if end_page is not None and detected_index > end_page:
             continue
         digest = hashlib.md5(record_data).hexdigest()
         if digest in saved_digest_set:

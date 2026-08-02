@@ -133,7 +133,8 @@ class App:
                      values=('orig', 'png', 'jpeg')).pack(side='left', padx=4)
         self.hint(self.image_options, '选"内嵌图片"原样提取（PDF/EPUB/MOBI/AZW3/PRC均支持）；'
                                      '选分辨率按每页渲染（EPUB/MOBI支持，AZW3不支持）。'
-                                     '渲染默认JPEG，内嵌默认orig，JPEG质量固定最高',
+                                     '渲染默认JPEG，内嵌默认orig，JPEG质量固定最高，'
+                                     '电子书内嵌的页号范围按图片出现顺序',
                   wrap=520).pack(side='left', padx=4)
         self.image_options.pack_forget()
 
@@ -499,15 +500,15 @@ class App:
         jpeg_quality = JPEG_QUALITY_DEFAULT
         # 页号范围：空=全部页；"12-30"=区间；"12"=单页
         page_range = self._parse_image_page_range()
-        # 电子书内嵌提取：仅支持orig原样保存，且无"页"概念，忽略页号范围
+        # 电子书内嵌提取：仅支持orig原样保存；页号范围按图片出现顺序（EPUB=阅读顺序，MOBI系列=记录顺序）
         if os.path.splitext(source_path)[1].lower() in core.EBOOK_INLINE_EXTENSIONS \
                 and not render_dpi:
             if image_format != 'orig':
                 self.logln('提示: 电子书内嵌提取仅支持原样保存，格式已改为orig')
                 image_format = 'orig'
             if page_range is not None:
-                self.logln('提示: 电子书内嵌提取不支持页号范围，将提取全部图片')
-                page_range = None
+                self.logln('提示: 电子书无固定页码，页号范围按图片出现顺序（第%d-%d张）'
+                           % page_range)
         # 自动确定并创建保存目录（文件同目录 "<书名>_图片"），弹确认框显示路径；
         # 不用 askdirectory：它只能选已有目录，无法预填程序新建的目录
         default_dir_name = os.path.splitext(os.path.basename(source_path))[0] \
