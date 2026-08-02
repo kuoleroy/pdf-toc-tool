@@ -87,7 +87,7 @@
   <div class="row">
     <button id="o_btn">识别目录</button>
     <button id="o_text_btn">识别文字</button>
-    <label style="min-width:0"><input type="checkbox" id="o_mark"> 文字识别带[第N页]标记</label>
+    <label style="min-width:0"><input type="checkbox" id="o_mark"> 输出带[第N页]标记</label>
   </div>
   <div class="status" id="o_status"></div>
 </div>
@@ -192,6 +192,7 @@ bindSubmit('o_btn', 'o_status', '/api/ocr_toc', function () {
   var form = new FormData();
   form.append('file', document.getElementById('o_file').files[0]);
   form.append('page_range', document.getElementById('o_range').value);
+  form.append('page_mark', document.getElementById('o_mark').checked ? '1' : '0');
   return form;
 }, function () {
   var name = document.getElementById('o_file').files[0].name;

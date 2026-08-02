@@ -290,6 +290,9 @@ def apply_first_line_page_fallback(ocr_text: str, fallback_page: int) -> str:
     for line_index, line in enumerate(output_lines):
         if not line.strip():
             continue
+        if re.match(r'^\[第\d+页\]\s*$', line):
+            # [第N页] 标记行：跳过，继续找真正的首行内容
+            continue
         if re.search(r'\d+\s*$', line):
             break
         if line.startswith('#'):
@@ -308,11 +311,12 @@ def apply_first_line_page_fallback(ocr_text: str, fallback_page: int) -> str:
 
 def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int = OCR_DPI_DEFAULT,
                progress: Optional[Callable] = None, cancel_event=None,
-               pause_event=None) -> str:
+               pause_event=None, with_page_marks: bool = False) -> str:
     """OCR目录页(PDF页号) -> 缩进式txt文本（全角空格缩进 + 标题 + 页码）
 
     ocr 可传入已加载的引擎实例（load_ocr()），否则自动加载。
     说明：# 开头为提示行（无页码/缺标题/低置信度/页码异常），可删除或修改。
+    with_page_marks=True 时每页首条输出前加 [第N页] 标记行（N为PDF页号）。
     """
     if ocr is None:
         ocr = load_ocr()
@@ -321,9 +325,13 @@ def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int
     if not entries:
         raise ValueError('OCR未识别到任何目录条目')
     output_lines: List[str] = []
+    last_marked_page = None
     # (页码, 输出行索引, 缩进, 标题, 是否已有页码)：最近的有标题行，供无标题页码行合并
     last_titled_entry = None
     for page_number, indent_level, title, start_number, end_number, score in entries:
+        if with_page_marks and page_number != last_marked_page:
+            output_lines.append('[第%d页]' % page_number)
+            last_marked_page = page_number
         if start_number is None:
             # 纯数字标题视为被拆分出的页码（如 OCR 把 "86 94" 读成一行 "8694" 前的数字行）
             if title and title.isdigit() and len(title) <= NUMERIC_TITLE_MAX_LEN \
