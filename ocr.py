@@ -224,7 +224,7 @@ def _extract_entries(pdf_path: str, start_page: int, end_page: int, ocr_engine, 
             cleaned_text = RE_DOTS.sub('', text).strip()
             if not cleaned_text:
                 continue
-            # 目录页自身的"目录"标题行（可能带空格/点线分隔），不视为目录条目
+            # 目录页自身的"目录"标题行：跳过，由 ocr_to_txt 无条件写死输出
             if re.match(r'^\s*目\s*录\s*$', cleaned_text):
                 continue
             title = cleaned_text
@@ -302,10 +302,11 @@ def apply_first_line_page_fallback(ocr_text: str, fallback_page: int) -> str:
                     output_lines[line_index] = '%s ..... %d' % (title_with_indent,
                                                                 fallback_page)
             break
-        replaced_line = re.sub(r'(\s*[…\.]*)\d+\s*$',
-                               lambda match: match.group(1) + str(fallback_page), line)
-        if replaced_line != line:
-            output_lines[line_index] = replaced_line
+        if re.search(r'\d+\s*$', line):
+            # 行尾已有页码：无条件替换为范围开头
+            output_lines[line_index] = re.sub(
+                r'(\s*[…\.]*)\d+\s*$',
+                lambda match: match.group(1) + str(fallback_page), line)
         else:
             output_lines[line_index] = '%s ..... %d' % (line.rstrip(), fallback_page)
         break
@@ -386,6 +387,8 @@ def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int
             else:
                 output_lines.append('# 缺标题(第%d页): %s' % (
                     page_number, _format_page_number(start_number, end_number)))
+    # 无条件写死"目录"标题行（识别到了也被覆盖）：页码以输入范围开头为准
+    output_lines.insert(0, '目录 ..... %d' % start_page)
     return '\n'.join(output_lines) + '\n'
 
 
