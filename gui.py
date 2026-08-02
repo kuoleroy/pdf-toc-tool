@@ -213,6 +213,7 @@ class App:
         ocr_scrollbar.pack(side='right', fill='y')
         self.ocr_text.pack(side='left', fill='both', expand=True)
         self.nb.add(ocr_tab, text='OCR结果（可编辑）')
+        self._update_ocr_button_state()
 
     def hint(self, parent: ttk.Frame, text: str, wrap: int = 0) -> ttk.Label:
         """灰色小字提示"""
@@ -338,6 +339,7 @@ class App:
         self.btn_browse_txt.configure(state='normal')
         self.btn_ocr.configure(state='normal')
         self.btn_ocr_text.configure(state='normal')
+        self._update_ocr_button_state()
         self.btn_pause.configure(state='disabled')
         self.btn_stop.configure(state='disabled')
         return finished_type
@@ -550,12 +552,25 @@ class App:
             self.fmt_var.set('jpeg')
 
     def _on_pdf_file_changed(self, *_args) -> None:
-        """所选文件变化时联动"行尾带[…]号"文案：电子书无页码，[p序号]=阅读顺序"""
+        """所选文件变化时联动：复选框文案（电子书=阅读顺序号）与OCR按钮可用性（仅PDF）"""
+        if not hasattr(self, 'btn_ocr'):
+            return
         file_ext = os.path.splitext(self.pdf_var.get().strip())[1].lower()
         if file_ext in core.EBOOK_INLINE_EXTENSIONS:
             self.e_pdfpage_check.configure(text='行尾带[阅读顺序号]')
         else:
             self.e_pdfpage_check.configure(text='行尾带[PDF页号]')
+        self._update_ocr_button_state()
+
+    def _update_ocr_button_state(self) -> None:
+        """OCR只支持可渲染格式（PDF/EPUB/MOBI）：所选文件不可用时禁用识别按钮（任务期间不动）"""
+        if self._task is not None:
+            return
+        is_supported = os.path.splitext(self.pdf_var.get().strip())[1].lower() \
+            in core.OCR_EXTENSIONS
+        state = 'normal' if is_supported else 'disabled'
+        self.btn_ocr.configure(state=state)
+        self.btn_ocr_text.configure(state=state)
 
     def _parse_image_page_range(self) -> Optional[Tuple[int, int]]:
         """解析图片页号范围输入：空=None(全部)，"12-30"=区间，"12"=单页"""
@@ -643,6 +658,8 @@ class App:
     def _prepare_ocr_range(self) -> Optional[Tuple[str, int, int]]:
         """校验/补齐 OCR 页号范围；返回 (pdf_path, start_page, end_page) 或 None(取消)"""
         pdf_path = self.pdf_var.get().strip()
+        if pdf_path and os.path.splitext(pdf_path)[1].lower() not in core.OCR_EXTENSIONS:
+            raise ValueError('OCR识别仅支持PDF/EPUB/MOBI文件，请选择支持的文件')
         range_text = self.ocr_range_var.get().strip()
         if (not pdf_path or not os.path.isfile(pdf_path)
                 or not RE_PAGE_RANGE.match(range_text)):

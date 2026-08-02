@@ -26,6 +26,7 @@ EXTENSION_BY_FORMAT = {'png': 'png', 'jpeg': 'jpg', 'orig': ''}
 EPUB_EXTENSION = '.epub'         # EPUB内嵌图片走zip解压提取（HTML/SVG引用的位图）
 MOBI_EXTENSIONS = frozenset({'.mobi', '.azw3', '.prc'})  # PalmDB结构的电子书
 EBOOK_INLINE_EXTENSIONS = MOBI_EXTENSIONS | {EPUB_EXTENSION}  # 内嵌模式走特殊提取的电子书
+OCR_EXTENSIONS = frozenset({'.pdf', EPUB_EXTENSION, '.mobi'})  # OCR可渲染：PDF/EPUB/MOBI（AZW3/PRC无法打开）
 IMAGE_FILE_EXTENSIONS = frozenset({'.jpg', '.jpeg', '.png', '.gif', '.webp',
                                    '.bmp', '.svg', '.tif', '.tiff'})
 
