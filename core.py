@@ -559,11 +559,11 @@ def _export_inline_images(doc, out_dir: str, fmt: str, quality: int,
 
 
 def export_toc_txt(toc: List[List], out_path: str, with_pdf_page: bool = True) -> None:
-    """书签导出为txt。缩进2空格/级；with_pdf_page 时行尾带 [p页号]"""
+    """书签导出为txt。缩进2空格/级；with_pdf_page 时行尾带 [p页号]，否则仅标题"""
     with open(out_path, 'w', encoding='utf-8') as file_handle:
         for level, title, page in toc:
             indent_text = '  ' * (level - 1)
             if with_pdf_page:
                 file_handle.write('%s%s [p%d]\n' % (indent_text, title, page))
             else:
-                file_handle.write('%s%s %d\n' % (indent_text, title, page))
+                file_handle.write('%s%s\n' % (indent_text, title))

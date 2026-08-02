@@ -553,7 +553,7 @@ class App:
             self.fmt_var.set('jpeg')
 
     def _on_pdf_file_changed(self, *_args) -> None:
-        """所选文件变化时联动：复选框文案（电子书=阅读顺序号）与OCR按钮可用性（仅PDF）"""
+        """所选文件变化时联动：复选框（PDF必带页号置灰；电子书=阅读顺序号）与OCR按钮（仅可渲染格式）"""
         if not hasattr(self, 'btn_ocr'):
             return
         file_ext = os.path.splitext(self.pdf_var.get().strip())[1].lower()
@@ -561,6 +561,7 @@ class App:
             self.e_pdfpage_check.configure(text='行尾带[阅读顺序号]')
         else:
             self.e_pdfpage_check.configure(text='行尾带[PDF页号]')
+        self.e_pdfpage.set(True)
         self._update_ocr_button_state()
 
     def _update_ocr_button_state(self) -> None:
