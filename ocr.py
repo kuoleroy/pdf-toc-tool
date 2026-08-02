@@ -289,29 +289,18 @@ def apply_first_line_page_fallback(ocr_text: str, fallback_page: int,
     有页码的首条条目保留 OCR 识别结果（配合偏移定位正文页），不再覆盖，
     避免与写死的"目录"行页码重复；仅无页码时补范围开头，防止被当作续行合并。
     pdf_pages=True 时输出 [pN]（PDF页号免偏移）；否则输出印刷页码数字。
-    处理两类首行：
-      1. "# 无页码(...): 标题" 提示行 -> 去掉前缀并在标题后补页码
-      2. 普通标题行 -> 无页码则补上；已有页码保持原样
-    以 # 开头的其他提示行（缺标题/低置信度）与写死的"目录"行保持原样。
+    # 开头的提示行（无页码/缺标题/低置信度）保持原样：导入书签时自动丢弃。
     """
     output_lines = ocr_text.split('\n')
     for line_index, line in enumerate(output_lines):
         if not line.strip():
             continue
         if line.startswith('#'):
-            no_page_match = re.match(r'^# 无页码.*?:[ ]*(.+)$', line)
-            if no_page_match:
-                title_with_indent = no_page_match.group(1).rstrip()
-                # 保留行首全角缩进（层级信息），仅去尾部空白
-                if title_with_indent.strip():
-                    output_lines[line_index] = '%s ..... [p%d]' % (title_with_indent,
-                                                                   fallback_page) \
-                        if pdf_pages else '%s ..... %d' % (title_with_indent, fallback_page)
             break
         # 写死的"目录"行（[p范围开头]，PDF页号免偏移）：跳过，不参与页码回退
         if re.match(r'^\s*目\s*录\s*[….…]*\s*\[p\d+\]\s*$', line):
             continue
-        if not re.search(r'\d+\s*$', line):
+        if not (re.search(r'\[p\d+\]\s*$', line) or re.search(r'\d+\s*$', line)):
             # 行尾无页码：补范围为开头
             output_lines[line_index] = '%s ..... [p%d]' % (line.rstrip(), fallback_page) \
                 if pdf_pages else '%s ..... %d' % (line.rstrip(), fallback_page)
@@ -346,6 +335,7 @@ def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int
                 start_number = end_number = int(title)
                 title = ''
             else:
+                # 无页码的条目：输出"# 无页码"提示行（可见但导入书签时自动丢弃）
                 if title:
                     cleaned_title = RE_LEADING_SYMBOLS.sub('', title).strip()
                     if cleaned_title:
@@ -396,20 +386,34 @@ def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int
                     page_number, _format_page_number(start_number, end_number, offset)))
     # 无条件写死"目录"标题行（识别到了也被覆盖）：页码用[p范围开头]（PDF页号，免偏移）
     output_lines.insert(0, '目录 ..... [p%d]' % start_page)
-    # "目录"行写入书签作为一级父项，紧跟其后的第一条识别条目缩进为二级
-    # （# 无页码 提示行也缩进，fallback 去前缀后保留缩进，仍为二级）
+    # "目录"行写入书签作为一级父项：第一条识别条目页码与目录行（[p范围开头]）相同才缩进为二级，
+    # 页码不同（正文页）保持一级；# 提示行（无页码/缺标题/低置信度）保持原样（导入时丢弃）；
+    # 印刷页码模式（无 offset）无法与PDF页号比较，不缩进
+    first_entry_page = _first_entry_page(output_lines[1:])
+    indent_needed = offset is not None and first_entry_page is not None \
+        and first_entry_page == start_page
     for line_index, line in enumerate(output_lines[1:], start=1):
-        if not line.strip():
+        if not line.strip() or line.startswith('#'):
             continue
-        if line.startswith('#'):
-            if not line.startswith('# 无页码'):
-                continue
-            line = re.sub(r'^(# 无页码[^:]*:\s*)', r'\1　', line)
-        else:
-            line = '　' + line
-        output_lines[line_index] = line
+        if indent_needed:
+            output_lines[line_index] = '　' + line
         break
     return '\n'.join(output_lines) + '\n'
+
+
+def _first_entry_page(lines) -> Optional[int]:
+    """目录行之后第一条会成书签条目的行尾页码（[pN]或印刷数字）；无则None"""
+    for line in lines:
+        text = line.strip()
+        if not text or text.startswith('#'):
+            continue
+        page_match = re.search(r'\[p(\d+)\]\s*$', text)
+        if page_match:
+            return int(page_match.group(1))
+        page_match = re.search(r'(\d+)\s*$', text)
+        if page_match:
+            return int(page_match.group(1))
+    return None
 
 
 def extract_text(pdf_path: str, start_page: int, end_page: int, ocr=None,
