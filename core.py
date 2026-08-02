@@ -33,13 +33,13 @@ IMAGE_FILE_EXTENSIONS = frozenset({'.jpg', '.jpeg', '.png', '.gif', '.webp',
 KIND_PDF_PAGE = 'pdf'      # 页码类型：直接PDF页号 [pN]
 KIND_PRINT_PAGE = 'print'  # 页码类型：印刷页码（写入时需加偏移）
 
-# 目录txt行格式（全角空格缩进 + 标题 + 页码）
-RE_RANGE = re.compile(r'^(　*)(.*?)[…\.]*\s*(\d+)\s*[—–\-]\s*(\d+)\s*$')
-RE_SINGLE = re.compile(r'^(　*)(.*?)[…\.]*\s*(\d+)\s*$')
-RE_PDF_PAGE = re.compile(r'^(　*)(.*?)[…\.]*\s*\[p(\d+)\]\s*$')
+# 目录txt行格式（全角/半角空格缩进 + 标题 + 页码）
+RE_RANGE = re.compile(r'^([ 　]*)(.*?)[…\.]*\s*(\d+)\s*[—–\-]\s*(\d+)\s*$')
+RE_SINGLE = re.compile(r'^([ 　]*)(.*?)[…\.]*\s*(\d+)\s*$')
+RE_PDF_PAGE = re.compile(r'^([ 　]*)(.*?)[…\.]*\s*\[p(\d+)\]\s*$')
 RE_TOC_TITLE = re.compile(r'^\s*目\s*录\s*(?:[….…]*\s*(?:\[p\d+\]|\d+)\s*)?$')
 RE_YEAR_RANGE = re.compile(r'^\s*\d{4}\s*[—–\-]\s*\d{4}\s*年?\s*$')
-RE_FULLWIDTH_INDENT = re.compile(r'^(　*)')
+RE_FULLWIDTH_INDENT = re.compile(r'^([ 　]*)')
 RE_TRAILING_DOTS = re.compile(r'[…\.]+$')
 RE_LOW_CONFIDENCE = re.compile(r'^#\s*低置信度\(\d*\.?\d+\):\s*(.*)$')
 
