@@ -302,6 +302,9 @@ def apply_first_line_page_fallback(ocr_text: str, fallback_page: int) -> str:
                     output_lines[line_index] = '%s ..... %d' % (title_with_indent,
                                                                 fallback_page)
             break
+        # 写死的"目录"行（[p范围开头]，PDF页号免偏移）：跳过，不参与页码回退
+        if re.match(r'^\s*目\s*录\s*[….…]*\s*\[p\d+\]\s*$', line):
+            continue
         if re.search(r'\d+\s*$', line):
             # 行尾已有页码：无条件替换为范围开头
             output_lines[line_index] = re.sub(
@@ -387,8 +390,8 @@ def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int
             else:
                 output_lines.append('# 缺标题(第%d页): %s' % (
                     page_number, _format_page_number(start_number, end_number)))
-    # 无条件写死"目录"标题行（识别到了也被覆盖）：页码以输入范围开头为准
-    output_lines.insert(0, '目录 ..... %d' % start_page)
+    # 无条件写死"目录"标题行（识别到了也被覆盖）：页码用[p范围开头]（PDF页号，免偏移）
+    output_lines.insert(0, '目录 ..... [p%d]' % start_page)
     return '\n'.join(output_lines) + '\n'
 
 
