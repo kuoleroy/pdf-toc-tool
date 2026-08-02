@@ -342,9 +342,8 @@ def api_extract_images(file: UploadFile = File(...),
 
 
 @app.post('/api/ocr_toc')
-def api_ocr_toc(file: UploadFile = File(...), page_range: str = Form(''),
-                page_mark: str = Form('0')):
-    """OCR识别目录页：上传文件+页号范围，返回目录txt下载（含 # 提示行）"""
+def api_ocr_toc(file: UploadFile = File(...), page_range: str = Form('')):
+    """OCR识别目录页：上传文件+页号范围，返回目录txt下载（行尾点线+印刷页码，含#提示行）"""
     work_dir = tempfile.mkdtemp(prefix='web_ocr_')
     try:
         file_path = _save_upload(file, work_dir, os.path.basename(file.filename or 'book.pdf'))
@@ -354,8 +353,7 @@ def api_ocr_toc(file: UploadFile = File(...), page_range: str = Form(''),
         ocr_module = _load_ocr_module()
         with _OCR_LOCK:
             engine = ocr_module.load_ocr()
-            text = ocr_module.ocr_to_txt(file_path, start_page, end_page, ocr=engine,
-                                         with_page_marks=page_mark.strip() == '1')
+            text = ocr_module.ocr_to_txt(file_path, start_page, end_page, ocr=engine)
             text = ocr_module.apply_first_line_page_fallback(text, end_page + 1)
         output_path = os.path.join(work_dir, 'OCR目录.txt')
         with open(output_path, 'w', encoding='utf-8') as file_handle:

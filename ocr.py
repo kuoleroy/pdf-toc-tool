@@ -301,22 +301,22 @@ def apply_first_line_page_fallback(ocr_text: str, fallback_page: int) -> str:
                 title_with_indent = no_page_match.group(1).rstrip()
                 # 保留行首全角缩进（层级信息），仅去尾部空白
                 if title_with_indent.strip():
-                    output_lines[line_index] = '%s %d' % (title_with_indent,
-                                                          fallback_page)
+                    output_lines[line_index] = '%s ..... %d' % (title_with_indent,
+                                                                fallback_page)
         else:
-            output_lines[line_index] = '%s %d' % (line.rstrip(), fallback_page)
+            output_lines[line_index] = '%s ..... %d' % (line.rstrip(), fallback_page)
         break
     return '\n'.join(output_lines)
 
 
 def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int = OCR_DPI_DEFAULT,
                progress: Optional[Callable] = None, cancel_event=None,
-               pause_event=None, with_page_marks: bool = False) -> str:
-    """OCR目录页(PDF页号) -> 缩进式txt文本（全角空格缩进 + 标题 + 页码）
+               pause_event=None) -> str:
+    """OCR目录页(PDF页号) -> 缩进式txt文本（全角空格缩进 + 标题 + 点线 + 印刷页码）
 
     ocr 可传入已加载的引擎实例（load_ocr()），否则自动加载。
     说明：# 开头为提示行（无页码/缺标题/低置信度/页码异常），可删除或修改。
-    with_page_marks=True 时每页首条输出前加 [第N页] 标记行（N为PDF页号）。
+    行尾数字为印刷页码（用点线分隔，区别于提取书签的 [p页码] PDF页号），写入书签时需偏移。
     """
     if ocr is None:
         ocr = load_ocr()
@@ -325,13 +325,9 @@ def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int
     if not entries:
         raise ValueError('OCR未识别到任何目录条目')
     output_lines: List[str] = []
-    last_marked_page = None
     # (页码, 输出行索引, 缩进, 标题, 是否已有页码)：最近的有标题行，供无标题页码行合并
     last_titled_entry = None
     for page_number, indent_level, title, start_number, end_number, score in entries:
-        if with_page_marks and page_number != last_marked_page:
-            output_lines.append('[第%d页]' % page_number)
-            last_marked_page = page_number
         if start_number is None:
             # 纯数字标题视为被拆分出的页码（如 OCR 把 "86 94" 读成一行 "8694" 前的数字行）
             if title and title.isdigit() and len(title) <= NUMERIC_TITLE_MAX_LEN \
@@ -352,19 +348,19 @@ def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int
             if split_result:
                 start_number, end_number = split_result
             else:
-                output_lines.append('# 页码异常(第%d页): %s [%s]' % (
+                output_lines.append('# 页码异常(第%d页): %s %s' % (
                     page_number, title or '?', _format_page_number(start_number, end_number)))
                 continue
         if start_number < PAGE_NUMBER_MIN or end_number > PAGE_NUMBER_MAX \
                 or start_number > end_number:
-            output_lines.append('# 页码异常(第%d页): %s [%s]' % (
+            output_lines.append('# 页码异常(第%d页): %s %s' % (
                 page_number, title or '?', _format_page_number(start_number, end_number)))
             continue
         # 行首符号清洗（"-95 115" -> "95 115"）；清洗后纯数字视为无标题（页码被拆分）
         title = RE_LEADING_SYMBOLS.sub('', title).strip()
         if title and not title.isdigit():
-            line_text = '%s%s %s' % ('　' * indent_level, title,
-                                     _format_page_number(start_number, end_number))
+            line_text = '%s%s ..... %s' % ('　' * indent_level, title,
+                                           _format_page_number(start_number, end_number))
             _append_low_confidence(output_lines, line_text, score)
             last_titled_entry = (page_number, len(output_lines) - 1,
                                  indent_level, title, True)
@@ -377,8 +373,8 @@ def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int
                                                          last_titled_entry[3])
                 existing_line = output_lines[line_index]
                 if existing_line.startswith('# 无页码'):
-                    new_line = '%s%s %s' % ('　' * merge_indent, merge_title,
-                                            _format_page_number(start_number, end_number))
+                    new_line = '%s%s ..... %s' % ('　' * merge_indent, merge_title,
+                                                  _format_page_number(start_number, end_number))
                 else:
                     new_line = '%s %s' % (existing_line.rstrip(),
                                           _format_page_number(start_number, end_number))
