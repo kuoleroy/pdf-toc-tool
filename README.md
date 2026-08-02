@@ -2,10 +2,7 @@
 
 为扫描版 PDF 批量提取 / 写入书签（目录）的轻量工具。Python 实现（GUI + CLI），
 基于 [PyMuPDF](https://pymupdf.readthedocs.io/)。提供**单一完整版本**：
-
-| 版本 | 说明 | 体积 |
-|---|---|---|
-| **PDFTocTool.exe** | 全部功能：写书签、提取书签/电子书目录、提取图片、扫描目录页 OCR 识别 | ~490MB |
+**PDFTocTool.exe**（全部功能：写书签、提取书签/电子书目录、提取图片、OCR 识别）。
 
 OCR 后端为 [RapidOCR](https://github.com/RapidAI/RapidOCR)（PaddleOCR 模型权重 + onnxruntime 推理），
 首次识别自动下载模型（需联网）。
@@ -14,9 +11,11 @@ OCR 后端为 [RapidOCR](https://github.com/RapidAI/RapidOCR)（PaddleOCR 模型
 
 ## 功能
 
-- **提取书签**：从 PDF 提取目录到 txt（含层级缩进与 PDF 页号），修改后可原样回写
+- **提取书签**：从 PDF 提取目录到 txt（含层级缩进与 PDF 页号，行尾页号可勾选），修改后可原样回写
 - **提取图片**：提取 PDF 内嵌图片（原样保存或转 PNG/JPEG、自动去重），
-  也可按指定分辨率把每页渲染成图片（PNG/JPEG，JPEG 质量可调）
+  也可按指定分辨率把每页渲染成图片（PNG/JPEG）；支持限定页号范围；
+  电子书（EPUB/MOBI/AZW3/PRC）可提取内嵌图片原样保存（无页码，范围按图片出现顺序），
+  EPUB/MOBI 还可按分辨率整页渲染
 - **提取电子书目录**（EPUB / MOBI / AZW3 / PRC）：提取内置目录为 txt（缩进层级 + `[p序号]`，
   序号为目录项在书中的阅读顺序，非页码；EPUB3/EPUB2/新版MOBI均支持，无需额外依赖）
 - **写入书签**：将 txt 目录写入 PDF，兼容两种常见格式（见下）
@@ -36,7 +35,8 @@ python pdf_toc_tool.py
 
 1. 选择 PDF 或电子书文件（写入模式还需选择目录 txt）
 2. 选择"写入书签"或"提取书签/电子书目录"
-3. 写入模式设置印刷页偏移（默认 15，见"页码偏移"一节；也可自动检测）
+3. 写入模式需设置页码偏移：填"正文第一页"的 PDF 页号和印刷页码自动换算
+   （也可点"算偏移"自动检测，见"页码偏移"一节）
 4. 预览后执行
 
 执行类操作（提取/写入/OCR）都在**后台进程**中运行，界面不卡顿：
@@ -75,11 +75,11 @@ python pdf_toc_tool.py ocr <pdf> <起始PDF页>-<结束PDF页> [-a] [-o 输出tx
 # 提取电子书内置目录（EPUB/MOBI/AZW3/PRC；[p序号]为阅读顺序号，非页码）
 python pdf_toc_tool.py ebook <电子书> [输出txt]
 
-# 提取PDF图片（默认提取内嵌图片、原样保存；-r 改为按分辨率渲染每页；-f 格式 orig/png/jpeg；-q JPEG质量）
-python pdf_toc_tool.py pdfimages <pdf> [输出目录] [-r 100] [-f jpeg] [-q 80]
+# 提取PDF/电子书图片（默认提取内嵌图片、原样保存；-r 改为按分辨率渲染每页；-f 格式 orig/png/jpeg；-q JPEG质量；电子书内嵌仅orig）
+python pdf_toc_tool.py pdfimages <文件> [输出目录] [-r 100] [-f jpeg] [-q 80]
 ```
 
-`copy` 生成 `_带目录.pdf` 副本；`same` 直接增量写原文件（建议先备份）。
+`copy` 生成 `_带目录.pdf` 副本；`same` 直接增量写原文件（GUI 会先弹备份警告，建议先备份）。
 
 ### 打包为 exe（Windows）
 
@@ -138,10 +138,10 @@ pdf-toc-tool/
 ├── pdf_toc_tool.py        # 入口（无参数=GUI，带参数=CLI）
 ├── core.py                # 核心逻辑：txt解析、书签写入/提取
 ├── ebook.py               # 电子书内置目录提取（EPUB/MOBI/AZW3，仅标准库）
-├── ocr.py                 # OCR（可选依赖，未装时自动禁用）
+├── ocr.py                 # OCR（RapidOCR，首次识别自动下载模型）
 ├── gui.py                 # tkinter 图形界面
 ├── cli.py                 # 命令行接口
-└── (构建相关：BUILD.md / LICENSE / requirements*.txt 等)
+└── (构建相关：BUILD.md / LICENSE / requirements.txt 等)
 ```
 
 ## 开源许可
