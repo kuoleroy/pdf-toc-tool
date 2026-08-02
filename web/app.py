@@ -16,6 +16,7 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 from typing import Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -111,6 +112,28 @@ def _parse_format(fmt: str) -> str:
     return image_format
 
 
+def _parse_required_range(page_range: str) -> Tuple[int, int]:
+    """OCR 页号范围：必填（如 11-16）"""
+    start_page, end_page = _parse_page_range(page_range)
+    if start_page is None or end_page is None:
+        raise HTTPException(400, 'OCR需要填写页号范围，如 11-16')
+    return start_page, end_page
+
+
+# OCR 引擎为全局单例且重资源：全局锁串行化，同一时间只跑一个OCR任务
+_OCR_LOCK = threading.Lock()
+
+
+def _load_ocr_module():
+    """延迟导入 ocr 模块；服务器缺 OCR 依赖时给清晰错误"""
+    try:
+        import ocr as ocr_module
+    except ImportError as error:
+        raise HTTPException(500, '服务器缺少OCR依赖（numpy / rapidocr-onnxruntime），'
+                                 '请先安装 web/requirements.txt 后重启') from error
+    return ocr_module
+
+
 @app.post('/api/write_toc')
 def api_write_toc(pdf: UploadFile = File(...), toc: UploadFile = File(...),
                   first_pdf: str = Form(''), first_print: str = Form('')):
@@ -130,6 +153,9 @@ def api_write_toc(pdf: UploadFile = File(...), toc: UploadFile = File(...),
         return FileResponse(output_path, filename=os.path.basename(output_path),
                             media_type='application/pdf',
                             background=lambda: _cleanup_work_dir(work_dir))
+    except HTTPException:
+        _cleanup_work_dir(work_dir)
+        raise
     except Exception as error:
         _cleanup_work_dir(work_dir)
         raise HTTPException(400, str(error))
@@ -158,6 +184,9 @@ def api_extract_toc(file: UploadFile = File(...), with_page: str = Form('1')):
                             filename=file_stem + ('_目录.txt' if is_ebook else '_书签.txt'),
                             media_type='text/plain; charset=utf-8',
                             background=lambda: _cleanup_work_dir(work_dir))
+    except HTTPException:
+        _cleanup_work_dir(work_dir)
+        raise
     except Exception as error:
         _cleanup_work_dir(work_dir)
         raise HTTPException(400, str(error))
@@ -187,6 +216,68 @@ def api_extract_images(file: UploadFile = File(...),
         return FileResponse(zip_path + '.zip', filename='images.zip',
                             media_type='application/zip',
                             background=lambda: _cleanup_work_dir(work_dir))
+    except HTTPException:
+        _cleanup_work_dir(work_dir)
+        raise
+    except Exception as error:
+        _cleanup_work_dir(work_dir)
+        raise HTTPException(400, str(error))
+
+
+@app.post('/api/ocr_toc')
+def api_ocr_toc(file: UploadFile = File(...), page_range: str = Form('')):
+    """OCR识别目录页：上传文件+页号范围，返回目录txt下载（含 # 提示行）"""
+    work_dir = tempfile.mkdtemp(prefix='web_ocr_')
+    try:
+        file_path = _save_upload(file, work_dir, os.path.basename(file.filename or 'book.pdf'))
+        if os.path.splitext(file_path)[1].lower() not in core.OCR_EXTENSIONS:
+            raise HTTPException(400, 'OCR识别仅支持PDF/EPUB/MOBI文件')
+        start_page, end_page = _parse_required_range(page_range)
+        ocr_module = _load_ocr_module()
+        with _OCR_LOCK:
+            engine = ocr_module.load_ocr()
+            text = ocr_module.ocr_to_txt(file_path, start_page, end_page, ocr=engine)
+            text = ocr_module.apply_first_line_page_fallback(text, end_page + 1)
+        output_path = os.path.join(work_dir, 'OCR目录.txt')
+        with open(output_path, 'w', encoding='utf-8') as file_handle:
+            file_handle.write(text)
+        file_stem = os.path.splitext(os.path.basename(file.filename or 'book.pdf'))[0]
+        return FileResponse(output_path, filename=file_stem + '_目录(OCR).txt',
+                            media_type='text/plain; charset=utf-8',
+                            background=lambda: _cleanup_work_dir(work_dir))
+    except HTTPException:
+        _cleanup_work_dir(work_dir)
+        raise
+    except Exception as error:
+        _cleanup_work_dir(work_dir)
+        raise HTTPException(400, str(error))
+
+
+@app.post('/api/ocr_text')
+def api_ocr_text(file: UploadFile = File(...), page_range: str = Form(''),
+                 page_mark: str = Form('0')):
+    """OCR识别任意页文字：上传文件+页号范围，返回纯文字txt下载"""
+    work_dir = tempfile.mkdtemp(prefix='web_ocr_')
+    try:
+        file_path = _save_upload(file, work_dir, os.path.basename(file.filename or 'book.pdf'))
+        if os.path.splitext(file_path)[1].lower() not in core.OCR_EXTENSIONS:
+            raise HTTPException(400, 'OCR识别仅支持PDF/EPUB/MOBI文件')
+        start_page, end_page = _parse_required_range(page_range)
+        ocr_module = _load_ocr_module()
+        with _OCR_LOCK:
+            engine = ocr_module.load_ocr()
+            text = ocr_module.extract_text(file_path, start_page, end_page, ocr=engine,
+                                           with_page_marks=page_mark.strip() == '1')
+        output_path = os.path.join(work_dir, 'OCR文字.txt')
+        with open(output_path, 'w', encoding='utf-8') as file_handle:
+            file_handle.write(text)
+        file_stem = os.path.splitext(os.path.basename(file.filename or 'book.pdf'))[0]
+        return FileResponse(output_path, filename=file_stem + '_文字(OCR).txt',
+                            media_type='text/plain; charset=utf-8',
+                            background=lambda: _cleanup_work_dir(work_dir))
+    except HTTPException:
+        _cleanup_work_dir(work_dir)
+        raise
     except Exception as error:
         _cleanup_work_dir(work_dir)
         raise HTTPException(400, str(error))

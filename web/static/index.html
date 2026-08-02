@@ -74,6 +74,21 @@
   <div class="status" id="i_status"></div>
 </div>
 
+<div class="card">
+  <h2>4. OCR 识别（扫描页文字）</h2>
+  <div class="row"><label>PDF/电子书:</label><input type="file" id="o_file"></div>
+  <div class="row"><label>页号范围:</label>
+    <input type="text" id="o_range" placeholder="如 11-16" size="16">
+    <span class="hint">PDF页号；仅PDF/EPUB/MOBI；首次识别自动下载模型（需联网，较慢）</span>
+  </div>
+  <div class="row">
+    <button id="o_btn">识别目录</button>
+    <button id="o_text_btn">识别文字</button>
+    <label style="min-width:0"><input type="checkbox" id="o_mark"> 文字识别带[第N页]标记</label>
+  </div>
+  <div class="status" id="o_status"></div>
+</div>
+
 <script>
 function bindSubmit(btnId, statusId, url, buildForm, filenameHint) {
   document.getElementById(btnId).addEventListener('click', function () {
@@ -136,6 +151,27 @@ bindSubmit('i_btn', 'i_status', '/api/extract_images', function () {
   form.append('page_range', document.getElementById('i_range').value);
   return form;
 }, function () { return 'images.zip'; });
+
+bindSubmit('o_btn', 'o_status', '/api/ocr_toc', function () {
+  var form = new FormData();
+  form.append('file', document.getElementById('o_file').files[0]);
+  form.append('page_range', document.getElementById('o_range').value);
+  return form;
+}, function () {
+  var name = document.getElementById('o_file').files[0].name;
+  return name.replace(/\.[^.]+$/, '') + '_目录(OCR).txt';
+});
+
+bindSubmit('o_text_btn', 'o_status', '/api/ocr_text', function () {
+  var form = new FormData();
+  form.append('file', document.getElementById('o_file').files[0]);
+  form.append('page_range', document.getElementById('o_range').value);
+  form.append('page_mark', document.getElementById('o_mark').checked ? '1' : '0');
+  return form;
+}, function () {
+  var name = document.getElementById('o_file').files[0].name;
+  return name.replace(/\.[^.]+$/, '') + '_文字(OCR).txt';
+});
 </script>
 </body>
 </html>
