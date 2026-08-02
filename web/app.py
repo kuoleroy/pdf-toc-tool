@@ -145,9 +145,16 @@ def api_write_toc(pdf: UploadFile = File(...), toc: UploadFile = File(...),
         offset = 0
         first_pdf_no = _parse_optional_int(first_pdf, '正文第一页的PDF页号')
         first_print_no = _parse_optional_int(first_print, '正文第一页的印刷页码')
-        if first_pdf_no is not None and first_print_no is not None:
-            offset = first_pdf_no - 1 - first_print_no
+        if (first_pdf_no is None) != (first_print_no is None):
+            raise HTTPException(400, '正文第一页的PDF页号和印刷页码需同时填写或同时留空')
         parsed_entries = core.levels_from_indent(core.parse_toc(txt_path))
+        if first_pdf_no is None:
+            uses_pdf_pages = all(entry[2] == core.KIND_PDF_PAGE for entry in parsed_entries)
+            if not uses_pdf_pages:
+                raise HTTPException(400, '目录txt使用印刷页码，必须填写"正文第一页"的PDF页号和印刷页码'
+                                         '（或把txt改为[p页号]格式）')
+        else:
+            offset = first_pdf_no - 1 - first_print_no
         toc_entries = core.build_toc(parsed_entries, offset)
         output_path = core.write_toc(pdf_path, toc_entries, 'copy')
         return FileResponse(output_path, filename=os.path.basename(output_path),

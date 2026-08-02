@@ -18,6 +18,9 @@
   .status { margin-top: 10px; font-size: 13px; color: #27ae60; white-space: pre-wrap; }
   .status.error { color: #e74c3c; }
   .hint { font-size: 12px; color: #999; }
+  .hint.warn { color: #e74c3c; font-weight: bold; }
+  .hint.ok { color: #27ae60; }
+  input.required { border-color: #e74c3c; background: #fff5f5; }
 </style>
 </head>
 <body>
@@ -30,7 +33,7 @@
   <div class="row"><label>正文第一页:</label>
     <input type="text" id="w_pdf_no" placeholder="PDF页号(可空)" size="10">
     <input type="text" id="w_print_no" placeholder="印刷页码(可空)" size="10">
-    <span class="hint">都填时自动算偏移；txt 用 [p页号] 可留空</span>
+    <span class="hint" id="w_offset_hint">先选txt：用[p页号]可留空，用印刷页码必须填</span>
   </div>
   <div class="row"><button id="w_btn">执行并下载 _带目录.pdf</button></div>
   <div class="status" id="w_status"></div>
@@ -90,8 +93,7 @@
 </div>
 
 <script>
-function bindSubmit(btnId, statusId, url, buildForm, filenameHint) {
-  document.getElementById(btnId).addEventListener('click', function () {
+function bindSubmit(btnId, statusId, url, buildForm, filenameHint) {  document.getElementById(btnId).addEventListener('click', function () {
     var btn = this, status = document.getElementById(statusId);
     btn.disabled = true;
     status.className = 'status';
@@ -123,6 +125,31 @@ function bindSubmit(btnId, statusId, url, buildForm, filenameHint) {
       .then(function () { btn.disabled = false; });
   });
 }
+
+// 根据目录txt是否用[p页号]，提示正文第一页两个输入框是否必填
+document.getElementById('w_txt').addEventListener('change', function () {
+  var file = this.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function (e) {
+    var hasPdfPage = /\[p\s*\d+\]/.test(e.target.result);
+    var hint = document.getElementById('w_offset_hint');
+    var pdfNo = document.getElementById('w_pdf_no');
+    var printNo = document.getElementById('w_print_no');
+    if (hasPdfPage) {
+      hint.textContent = 'txt 已用 [p页号]，可留空';
+      hint.className = 'hint ok';
+      pdfNo.classList.remove('required');
+      printNo.classList.remove('required');
+    } else {
+      hint.textContent = 'txt 为印刷页码，必须填写两个框！';
+      hint.className = 'hint warn';
+      pdfNo.classList.add('required');
+      printNo.classList.add('required');
+    }
+  };
+  reader.readAsText(file, 'utf-8');
+});
 
 bindSubmit('w_btn', 'w_status', '/api/write_toc', function () {
   var form = new FormData();
