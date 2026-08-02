@@ -6,6 +6,7 @@ import posixpath
 import re
 import shutil
 import struct
+import tempfile
 import time
 import zipfile
 from typing import Callable, List, Optional, Tuple
@@ -173,6 +174,40 @@ def parse_toc(txt_path: str) -> List[List]:
     if pending_line is not None:
         raise ValueError('目录文件末尾存在未完成的续行: %r' % pending_line[:60])
     return parsed_entries
+
+
+def format_toc_text(ai_text: str) -> str:
+    """格式化外部AI识别的目录文本 -> 标准目录txt（缩进+标题+点线+页码）
+
+    解析规则同 parse_toc（README"目录 txt 格式"）；[pN] 保留为PDF页号写法。
+    失败抛出 ValueError（中文原因）。
+    """
+    ai_text = (ai_text or '').strip()
+    if not ai_text:
+        raise ValueError('请粘贴外部AI识别的目录文本')
+    descriptor, temp_path = tempfile.mkstemp(suffix='.txt', prefix='ai_toc_')
+    os.close(descriptor)
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as file_handle:
+            file_handle.write(ai_text)
+        entries = parse_toc(temp_path)
+        if not entries:
+            raise ValueError('未能解析出任何目录条目，请检查文本格式'
+                             '（每行：标题+页码，支持印刷页码/页码范围/[p页号]，行首缩进表示层级）')
+        lines = []
+        for indent_level, title, page_kind, page_number in entries:
+            indent = '　' * indent_level
+            if page_kind == KIND_PDF_PAGE:
+                page_str = '[p%d]' % page_number
+            else:
+                page_str = str(page_number)
+            lines.append('%s%s ..... %s' % (indent, title, page_str))
+        return '\n'.join(lines) + '\n'
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
 
 
 def levels_from_indent(entries: List[List]) -> List[List]:

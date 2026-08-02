@@ -153,11 +153,14 @@ class App:
         self.btn_ocr.pack(side='left', padx=8)
         self.btn_ocr_text = ttk.Button(row_frame, text='识别文字', command=self.do_ocr_text)
         self.btn_ocr_text.pack(side='left', padx=8)
+        self.btn_ai_import = ttk.Button(row_frame, text='导入AI文本', command=self.do_ai_import)
+        self.btn_ai_import.pack(side='left', padx=8)
         self.ocr_page_mark_var = tk.BooleanVar(value=False)
         # 每页加[第N页]标记 复选框：暂注释隐藏，后续改为弹框控制
         # ttk.Checkbutton(row_frame, text='每页加[第N页]标记',
         #                 variable=self.ocr_page_mark_var).pack(side='left', padx=8)
-        self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[识别目录]自动检测偏移；结果可编辑后[确认写入]或[保存OCR结果…]',
+        self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[识别目录]需填正文第一页PDF页号与印刷页码；'
+                  '[导入AI文本]粘贴外部AI识别的目录并格式化为标准txt；结果可编辑后[确认写入]或[保存OCR结果…]',
                   wrap=430).pack(side='left', padx=8)
 
         # 进度条与按钮行放在日志区之前，窗口缩小时不遮挡操作按钮
@@ -716,6 +719,53 @@ class App:
         except Exception as error:
             self.logln('OCR错误: %s' % error)
             messagebox.showerror('OCR错误', str(error))
+
+    def do_ai_import(self) -> None:
+        """导入外部AI识别的目录文本：弹窗粘贴 -> 格式化 -> 另存txt"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title('导入外部AI识别的目录')
+        dialog.transient(self.root)
+        dialog.geometry('640x420')
+        tk.Label(dialog, text='粘贴AI识别出的目录文本（每行：标题+页码，支持印刷页码/页码范围/[p页号]，'
+                              '行首缩进表示层级），将格式化为标准格式并保存：',
+                 justify='left', anchor='w', wraplength=600).pack(fill='x', padx=10, pady=(10, 4))
+        text_widget = tk.Text(dialog, width=78, height=13)
+        text_widget.pack(fill='both', expand=True, padx=10)
+        status_var = tk.StringVar()
+        tk.Label(dialog, textvariable=status_var, fg='#b00020', justify='left', anchor='w',
+                 wraplength=600).pack(fill='x', padx=10, pady=2)
+
+        def on_format() -> None:
+            raw = text_widget.get('1.0', 'end').strip()
+            if not raw:
+                status_var.set('请先粘贴外部AI识别的目录文本')
+                return
+            try:
+                formatted = core.format_toc_text(raw)
+            except ValueError as error:
+                status_var.set(str(error))
+                return
+            save_path = filedialog.asksaveasfilename(
+                title='保存格式化目录', defaultextension='.txt', initialfile='格式化目录.txt',
+                filetypes=[('文本文件', '*.txt')])
+            if not save_path:
+                return
+            try:
+                with open(save_path, 'w', encoding='utf-8') as file_handle:
+                    file_handle.write(formatted)
+            except OSError as io_error:
+                messagebox.showerror('保存失败', str(io_error))
+                return
+            dialog.destroy()
+            entry_count = formatted.count('\n') - 1
+            self.logln('已格式化外部AI目录并保存: %s（%d 条）' % (save_path, entry_count))
+            messagebox.showinfo('完成', '已保存 %d 条目录到:\n%s' % (entry_count, save_path))
+
+        button_row = ttk.Frame(dialog)
+        button_row.pack(fill='x', padx=10, pady=10)
+        ttk.Button(button_row, text='格式化并保存…', command=on_format).pack(side='left')
+        ttk.Button(button_row, text='取消', command=dialog.destroy).pack(side='left', padx=8)
+        dialog.wait_window()
 
     def _prepare_write_from_text(self, text_to_parse: str) -> Optional[str]:
         """把待解析文本写入临时文件（write/parse_toc 需要文件路径），返回临时路径"""
