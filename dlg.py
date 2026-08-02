@@ -19,6 +19,7 @@ def ask_offset_fields(parent: tk.Tk, first_pdf_page_var: tk.StringVar,
     dialog.transient(parent)
     dialog.grab_set()
     dialog.resizable(False, False)
+    digits_cmd = (dialog.register(_digits_only), '%P')
 
     tk.Label(dialog, text='为防止书签页码错位，请填写正文第一页（目录后第一个正文页）的信息:',
              anchor='w').pack(fill='x', padx=12, pady=(10, 4))
@@ -27,10 +28,12 @@ def ask_offset_fields(parent: tk.Tk, first_pdf_page_var: tk.StringVar,
     input_row.pack(padx=12, pady=4)
     tk.Label(input_row, text='PDF页号:').pack(side='left')
     pdf_page_var = tk.StringVar(value=first_pdf_page_var.get())
-    tk.Entry(input_row, textvariable=pdf_page_var, width=6).pack(side='left', padx=4)
+    tk.Entry(input_row, textvariable=pdf_page_var, width=6,
+             validate='key', validatecommand=digits_cmd).pack(side='left', padx=4)
     tk.Label(input_row, text='印刷页码:').pack(side='left')
     printed_page_var = tk.StringVar(value=first_printed_page_var.get())
-    tk.Entry(input_row, textvariable=printed_page_var, width=6).pack(side='left', padx=4)
+    tk.Entry(input_row, textvariable=printed_page_var, width=6,
+             validate='key', validatecommand=digits_cmd).pack(side='left', padx=4)
 
     tk.Label(dialog, text='印刷页码 = 该页正文右下角印的数字（如 1）。',
              fg='gray').pack(anchor='w', padx=12)
@@ -67,6 +70,14 @@ def ask_offset_fields(parent: tk.Tk, first_pdf_page_var: tk.StringVar,
     return dialog_result.get('value')
 
 
+def _digits_only(text: str) -> bool:
+    return bool(re.fullmatch(r'\d*', text))
+
+
+def _range_input(text: str) -> bool:
+    return bool(re.fullmatch(r'\d*[—–\-]?\d*', text))
+
+
 def ask_ocr_args(parent: tk.Tk, pdf_path_var: tk.StringVar,
                  ocr_range_var: tk.StringVar) -> Optional[Tuple[str, str]]:
     """弹框选择PDF文件并填写目录页的PDF页号范围（如 11-16）。
@@ -79,6 +90,7 @@ def ask_ocr_args(parent: tk.Tk, pdf_path_var: tk.StringVar,
     dialog.transient(parent)
     dialog.grab_set()
     dialog.resizable(False, False)
+    range_cmd = (dialog.register(_range_input), '%P')
 
     tk.Label(dialog, text='请选择PDF文件并填写目录页的PDF页号范围:',
              anchor='w').pack(fill='x', padx=12, pady=(10, 4))
@@ -104,7 +116,8 @@ def ask_ocr_args(parent: tk.Tk, pdf_path_var: tk.StringVar,
     range_row.pack(padx=12, pady=4)
     tk.Label(range_row, text='目录页PDF页号:').pack(side='left')
     range_input_var = tk.StringVar(value=ocr_range_var.get())
-    tk.Entry(range_row, textvariable=range_input_var, width=12).pack(side='left', padx=4)
+    tk.Entry(range_row, textvariable=range_input_var, width=12,
+             validate='key', validatecommand=range_cmd).pack(side='left', padx=4)
     tk.Label(range_row, text='如 11-16（目录页在PDF中的页号）', fg='gray').pack(side='left')
 
     error_label = tk.Label(dialog, text='', fg='red')

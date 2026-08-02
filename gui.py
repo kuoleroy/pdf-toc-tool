@@ -55,6 +55,10 @@ class App:
         self._has_progress = False
         self._last_ocr_type: Optional[str] = None  # 最近一次OCR类型: 'toc'目录 / 'text'文字
 
+        # 输入框格式限制：非法字符（汉字/英文/符号）输入时不显示
+        self._vcmd_digits = (root.register(self._validate_digits), '%P')
+        self._vcmd_range = (root.register(self._validate_range_input), '%P')
+
         # ---- 1. 选择文件 ----
         file_frame = ttk.LabelFrame(root, text='1. 选择文件')
         file_frame.pack(fill='x', **PADDING)
@@ -117,7 +121,8 @@ class App:
         self.image_options.pack(side='left', padx=12)
         ttk.Label(self.image_options, text='页号(空=全部):').pack(side='left')
         self.page_range_var = tk.StringVar()
-        ttk.Entry(self.image_options, textvariable=self.page_range_var, width=8).pack(side='left', padx=4)
+        ttk.Entry(self.image_options, textvariable=self.page_range_var, width=8,
+                  validate='key', validatecommand=self._vcmd_range).pack(side='left', padx=4)
         ttk.Label(self.image_options, text='分辨率:').pack(side='left')
         self.resolution_var = tk.StringVar(value=DEFAULT_IMAGE_RESOLUTION)
         ttk.Combobox(self.image_options, textvariable=self.resolution_var, width=8,
@@ -142,7 +147,8 @@ class App:
         row_frame.pack(fill='x', **PADDING)
         ttk.Label(row_frame, text='页号范围:').pack(side='left')
         self.ocr_range_var = tk.StringVar()
-        ttk.Entry(row_frame, textvariable=self.ocr_range_var, width=12).pack(side='left', padx=4)
+        ttk.Entry(row_frame, textvariable=self.ocr_range_var, width=12,
+                  validate='key', validatecommand=self._vcmd_range).pack(side='left', padx=4)
         self.btn_ocr = ttk.Button(row_frame, text='识别目录', command=self.do_ocr)
         self.btn_ocr.pack(side='left', padx=8)
         self.btn_ocr_text = ttk.Button(row_frame, text='识别文字', command=self.do_ocr_text)
@@ -161,10 +167,12 @@ class App:
         offset_row.pack(fill='x', **PADDING)
         ttk.Label(offset_row, text='正文第一页 PDF页号:').pack(side='left')
         self.first_pdf_var = tk.StringVar()
-        ttk.Entry(offset_row, textvariable=self.first_pdf_var, width=8).pack(side='left', padx=4)
+        ttk.Entry(offset_row, textvariable=self.first_pdf_var, width=8,
+                  validate='key', validatecommand=self._vcmd_digits).pack(side='left', padx=4)
         ttk.Label(offset_row, text='印刷页码:').pack(side='left')
         self.first_print_var = tk.StringVar()
-        ttk.Entry(offset_row, textvariable=self.first_print_var, width=8).pack(side='left', padx=4)
+        ttk.Entry(offset_row, textvariable=self.first_print_var, width=8,
+                  validate='key', validatecommand=self._vcmd_digits).pack(side='left', padx=4)
         self.hint(offset_row, '目录后第一个正文页，识别目录/写书签共用，必填，自动算偏移',
                   wrap=430).pack(side='left', padx=8)
         self.ocr_offset_error_label = tk.Label(offset_row, text='', fg='#b00020')
@@ -653,6 +661,16 @@ class App:
             raise ValueError('请填写目录页PDF页号范围，如 11-16')
         start_page, end_page = int(range_match.group(1)), int(range_match.group(2))
         return pdf_path, start_page, end_page
+
+    @staticmethod
+    def _validate_digits(text: str) -> bool:
+        """输入框只允许数字；返回 False 时该字符不显示"""
+        return bool(re.fullmatch(r'\d*', text))
+
+    @staticmethod
+    def _validate_range_input(text: str) -> bool:
+        """页号范围输入框只允许 数字和连字符（如 12-30 或 12）；返回 False 时该字符不显示"""
+        return bool(re.fullmatch(r'\d*[—–\-]?\d*', text))
 
     def _field_offset(self) -> Optional[int]:
         """由"正文第一页的PDF页号+印刷页码"计算偏移量；缺失/非法返回None"""

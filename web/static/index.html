@@ -31,8 +31,8 @@
   <div class="row"><label>PDF文件:</label><input type="file" id="w_pdf"></div>
   <div class="row"><label>目录txt:</label><input type="file" id="w_txt"></div>
   <div class="row"><label>正文第一页:</label>
-    <input type="text" id="w_pdf_no" placeholder="PDF页号(可空)" size="10">
-    <input type="text" id="w_print_no" placeholder="印刷页码(可空)" size="10">
+    <input type="text" id="w_pdf_no" placeholder="PDF页号(可空)" size="10" oninput="digitsOnly(this)">
+    <input type="text" id="w_print_no" placeholder="印刷页码(可空)" size="10" oninput="digitsOnly(this)">
     <span class="hint" id="w_offset_hint">先选txt：用[p页号]可留空，用印刷页码须填"正文第一页"两个输入框</span>
   </div>
   <div class="row"><button id="w_btn">执行并下载 _带目录.pdf</button></div>
@@ -70,7 +70,7 @@
     <span class="hint">内嵌默认orig；渲染默认jpeg；电子书内嵌仅orig</span>
   </div>
   <div class="row"><label>页号范围:</label>
-    <input type="text" id="i_range" placeholder="空=全部，如 12-30 或 12" size="16">
+    <input type="text" id="i_range" placeholder="空=全部，如 12-30 或 12" size="16" oninput="rangeOnly(this)">
     <span class="hint">电子书内嵌按图片出现顺序</span>
   </div>
   <div class="row"><button id="i_btn">执行并下载 zip</button></div>
@@ -81,13 +81,13 @@
   <h2>4. OCR 识别（扫描页文字）</h2>
   <div class="row"><label>PDF/电子书:</label><input type="file" id="o_file"></div>
   <div class="row"><label>页号范围:</label>
-    <input type="text" id="o_range" placeholder="如 11-16" size="16">
+    <input type="text" id="o_range" placeholder="如 11-16" size="16" oninput="rangeOnly(this)">
     <span class="hint">PDF页号；仅PDF/EPUB/MOBI；首次识别自动下载模型（需联网，较慢）</span>
   </div>
   <div class="row"><label>正文第一页 PDF页号:</label>
-    <input type="text" id="o_pdf_no" size="8" style="width:60px">
+    <input type="text" id="o_pdf_no" size="8" style="width:60px" oninput="digitsOnly(this)">
     <label>印刷页码:</label>
-    <input type="text" id="o_print_no" size="8" style="width:60px">
+    <input type="text" id="o_print_no" size="8" style="width:60px" oninput="digitsOnly(this)">
     <span class="hint">识别目录必填，用于计算偏移量；识别文字可留空</span>
   </div>
   <div class="row">
@@ -115,6 +115,8 @@
 </div>
 
 <script>
+function digitsOnly(el) { el.value = el.value.replace(/[^\d]/g, ''); }
+function rangeOnly(el) { el.value = el.value.replace(/[^\d\-–—]/g, ''); }
 function openAiDialog() {
   document.getElementById('ai_dialog').style.display = 'flex';
   document.getElementById('ai_text').focus();
