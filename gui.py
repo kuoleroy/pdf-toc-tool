@@ -160,19 +160,8 @@ class App:
         # 每页加[第N页]标记 复选框：暂注释隐藏，后续改为弹框控制
         # ttk.Checkbutton(row_frame, text='每页加[第N页]标记',
         #                 variable=self.ocr_page_mark_var).pack(side='left', padx=8)
-        self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[导入AI文本]粘贴外部AI识别的目录并格式化为标准txt；'
-                  '结果可编辑后[确认写入]或[保存OCR结果…]',
-                  wrap=430).pack(side='left', padx=8)
-
-        offset_row = ttk.Frame(ocr_frame)
-        offset_row.pack(fill='x', **PADDING)
-        ttk.Label(offset_row, text='正文第一页 PDF页号:').pack(side='left')
-        self.ocr_pdf_no_var = tk.StringVar()
-        ttk.Entry(offset_row, textvariable=self.ocr_pdf_no_var, width=8).pack(side='left', padx=4)
-        ttk.Label(offset_row, text='印刷页码:').pack(side='left')
-        self.ocr_print_no_var = tk.StringVar()
-        ttk.Entry(offset_row, textvariable=self.ocr_print_no_var, width=8).pack(side='left', padx=4)
-        self.hint(offset_row, '识别目录必填（计算偏移，输出[pN]页号免偏移）；识别文字可留空',
+        self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[识别目录]需先在"2.操作"填正文第一页PDF页号与印刷页码；'
+                  '[导入AI文本]粘贴外部AI识别的目录并格式化为标准txt；结果可编辑后[确认写入]或[保存OCR结果…]',
                   wrap=430).pack(side='left', padx=8)
 
         # 进度条与按钮行放在日志区之前，窗口缩小时不遮挡操作按钮
@@ -659,17 +648,6 @@ class App:
         start_page, end_page = int(range_match.group(1)), int(range_match.group(2))
         return pdf_path, start_page, end_page
 
-    def _ocr_offset(self) -> Optional[int]:
-        """由OCR卡的"正文第一页PDF页号+印刷页码"计算偏移量；缺失/非法返回None"""
-        try:
-            first_pdf_page = int(self.ocr_pdf_no_var.get().strip())
-            first_printed_page = int(self.ocr_print_no_var.get().strip())
-            if first_pdf_page < 1 or first_printed_page < 1:
-                return None
-            return (first_pdf_page - 1) - first_printed_page
-        except ValueError:
-            return None
-
     def _field_offset(self) -> Optional[int]:
         """由"正文第一页的PDF页号+印刷页码"计算偏移量；缺失/非法返回None"""
         try:
@@ -710,9 +688,10 @@ class App:
             if ocr_args is None:
                 return
             pdf_path, start_page, end_page = ocr_args
-            offset = self._ocr_offset()
+            offset = self._field_offset()
             if offset is None:
-                self.logln('已取消：识别目录必须填写正文第一页的PDF页号和印刷页码')
+                self.logln('已取消：识别目录必须在"2.操作"填写正文第一页的PDF页号和印刷页码')
+                messagebox.showwarning('识别目录', '请先在"2.操作"填写正文第一页的PDF页号和印刷页码')
                 return
             self._last_ocr_type = 'toc'
             self.logln('加载OCR引擎并识别目录 PDF页 %d-%d（偏移=%d）…（首次运行下载模型，约需几分钟）'
