@@ -284,14 +284,14 @@ def _append_low_confidence(output_lines: List[str], text: str, score: float) -> 
 
 def apply_first_line_page_fallback(ocr_text: str, fallback_page: int,
                                    pdf_pages: bool = False) -> str:
-    """OCR结果首行页码无条件以输入范围开头为准（不管OCR识别到没有）
+    """OCR结果首条识别条目缺页码时，以输入范围开头兜底补上（目录行已写死[p范围开头]，不参与）
 
-    回退页码取"输入范围的开头"（用户以输入开头为基准）：
-    目录首条通常对应正文起始，补上后配合偏移即可定位到正文首页。
+    有页码的首条条目保留 OCR 识别结果（配合偏移定位正文页），不再覆盖，
+    避免与写死的"目录"行页码重复；仅无页码时补范围开头，防止被当作续行合并。
     pdf_pages=True 时输出 [pN]（PDF页号免偏移）；否则输出印刷页码数字。
     处理两类首行：
       1. "# 无页码(...): 标题" 提示行 -> 去掉前缀并在标题后补页码
-      2. 普通标题行 -> 行尾页码替换为范围开头；无页码则补上
+      2. 普通标题行 -> 无页码则补上；已有页码保持原样
     以 # 开头的其他提示行（缺标题/低置信度）与写死的"目录"行保持原样。
     """
     output_lines = ocr_text.split('\n')
@@ -311,13 +311,8 @@ def apply_first_line_page_fallback(ocr_text: str, fallback_page: int,
         # 写死的"目录"行（[p范围开头]，PDF页号免偏移）：跳过，不参与页码回退
         if re.match(r'^\s*目\s*录\s*[….…]*\s*\[p\d+\]\s*$', line):
             continue
-        if re.search(r'\d+\s*$', line):
-            # 行尾已有页码：无条件替换为范围开头
-            output_lines[line_index] = re.sub(
-                r'(\s*[…\.]*)\[p\d+\]\s*$' if pdf_pages else r'(\s*[…\.]*)\d+\s*$',
-                lambda match: match.group(1) + ('[p%d]' % fallback_page if pdf_pages
-                                                else str(fallback_page)), line)
-        else:
+        if not re.search(r'\d+\s*$', line):
+            # 行尾无页码：补范围为开头
             output_lines[line_index] = '%s ..... [p%d]' % (line.rstrip(), fallback_page) \
                 if pdf_pages else '%s ..... %d' % (line.rstrip(), fallback_page)
         break
@@ -401,6 +396,19 @@ def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int
                     page_number, _format_page_number(start_number, end_number, offset)))
     # 无条件写死"目录"标题行（识别到了也被覆盖）：页码用[p范围开头]（PDF页号，免偏移）
     output_lines.insert(0, '目录 ..... [p%d]' % start_page)
+    # "目录"行写入书签作为一级父项，紧跟其后的第一条识别条目缩进为二级
+    # （# 无页码 提示行也缩进，fallback 去前缀后保留缩进，仍为二级）
+    for line_index, line in enumerate(output_lines[1:], start=1):
+        if not line.strip():
+            continue
+        if line.startswith('#'):
+            if not line.startswith('# 无页码'):
+                continue
+            line = re.sub(r'^(# 无页码[^:]*:\s*)', r'\1　', line)
+        else:
+            line = '　' + line
+        output_lines[line_index] = line
+        break
     return '\n'.join(output_lines) + '\n'
 
 

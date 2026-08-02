@@ -127,6 +127,7 @@ def parse_toc(txt_path: str) -> List[List]:
     - 行首全角空格缩进决定层级（0级=1级标题）
     - 无页码的行视为上一标题的续行，自动拼接
     - `#` 开头为提示行：低置信度行剥去前缀保留，其余（无页码/缺标题/页码异常）忽略
+    - "目录"行（带页码）作为正常条目解析（一级），可作其后条目的父级
     - page_kind: KIND_PDF_PAGE（直接PDF页号）或 KIND_PRINT_PAGE（印刷页码，需加偏移）
     """
     parsed_entries: List[List] = []
@@ -141,7 +142,7 @@ def parse_toc(txt_path: str) -> List[List]:
                 if not low_confidence_match:
                     continue
                 line = low_confidence_match.group(1)
-            if RE_TOC_TITLE.match(line) or RE_YEAR_RANGE.match(line):
+            if RE_YEAR_RANGE.match(line):
                 continue
             pdf_page_match = RE_PDF_PAGE.match(line)
             if pdf_page_match:
