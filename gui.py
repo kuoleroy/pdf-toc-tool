@@ -616,6 +616,13 @@ class App:
             self.logln('%s%s [p%d]' % ('  ' * (level - 1), title, page_number))
         if len(toc_entries) > LOG_PREVIEW_COUNT:
             self.logln('... 共 %d 条' % len(toc_entries))
+        if self.outmode_var.get() == 'same':
+            if not messagebox.askyesno(
+                    '警告',
+                    '将直接修改原文件（覆盖原书签），建议先备份原文件！\n\n'
+                    '是否继续写入？'):
+                self.logln('已取消：未确认直接写入')
+                return
         self.logln('正在写入书签（后台）…')
         self._task_start('write', core._mp_write_toc,
                          (pdf_path, toc_entries, self.outmode_var.get()))
