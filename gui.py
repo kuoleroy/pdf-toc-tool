@@ -167,6 +167,8 @@ class App:
         ttk.Entry(offset_row, textvariable=self.first_print_var, width=8).pack(side='left', padx=4)
         self.hint(offset_row, '目录后第一个正文页，识别目录/写书签共用，必填，自动算偏移',
                   wrap=430).pack(side='left', padx=8)
+        self.ocr_offset_error_label = tk.Label(offset_row, text='', fg='#b00020')
+        self.ocr_offset_error_label.pack(side='left', padx=4)
 
         # 进度条与按钮行放在日志区之前，窗口缩小时不遮挡操作按钮
         progress_frame = ttk.Frame(root)
@@ -694,8 +696,9 @@ class App:
             pdf_path, start_page, end_page = ocr_args
             offset = self._field_offset()
             if offset is None:
-                self.logln('已取消：识别目录必须先填写"正文第一页"的PDF页号和印刷页码')
-                messagebox.showwarning('识别目录', '请先填写"正文第一页"的PDF页号和印刷页码')
+                self.logln('识别目录必填：正文第一页的PDF页号和印刷页码')
+                self.ocr_offset_error_label.configure(text='识别目录必填：PDF页号和印刷页码')
+                self.root.after(5000, lambda: self.ocr_offset_error_label.configure(text=''))
                 return
             self._last_ocr_type = 'toc'
             self.logln('加载OCR引擎并识别目录 PDF页 %d-%d（偏移=%d）…（首次运行下载模型，约需几分钟）'
