@@ -611,17 +611,19 @@ class App:
             raise ValueError('PDF文件不存在: %s' % pdf_path)
         if not os.path.isfile(txt_path):
             raise ValueError('txt文件不存在: %s' % txt_path)
-        offset = self._field_offset()
-        if offset is None:
-            offset_fields = self._ask_offset_fields()
-            if offset_fields is None:
-                self.logln('已取消：未填写偏移信息')
-                return
-            self.first_pdf_var.set(str(offset_fields[0]))
-            self.first_print_var.set(str(offset_fields[1]))
+        offset = 0
+        try:
+            with open(txt_path, encoding='utf-8-sig') as file_handle:
+                txt_content = file_handle.read()
+        except OSError as io_error:
+            raise ValueError('读取txt失败: %s' % io_error)
+        if not RE_OCR_PDF_PAGE.search(txt_content):
             offset = self._field_offset()
             if offset is None:
-                self.logln('提示: 偏移信息无效')
+                self.logln('写书签必填：正文第一页的PDF页号和印刷页码（txt为印刷页码格式）')
+                self.ocr_offset_error_label.configure(
+                    text='写书签必填：PDF页号和印刷页码')
+                self.root.after(5000, lambda: self.ocr_offset_error_label.configure(text=''))
                 return
         parsed_entries = core.levels_from_indent(core.parse_toc(txt_path))
         toc_entries = core.build_toc(parsed_entries, offset)
@@ -683,10 +685,6 @@ class App:
             return (first_pdf_page - 1) - first_printed_page
         except ValueError:
             return None
-
-    def _ask_offset_fields(self) -> Optional[Tuple[int, int]]:
-        """弹框要求填写正文第一页的PDF页号和印刷页码；返回 (pdf_no, print_no) 或 None(取消)"""
-        return dlg.ask_offset_fields(self.root, self.first_pdf_var, self.first_print_var)
 
     def _prepare_ocr_range(self) -> Optional[Tuple[str, int, int]]:
         """校验/补齐 OCR 页号范围；返回 (pdf_path, start_page, end_page) 或 None(取消)"""
@@ -803,22 +801,6 @@ class App:
             raise OSError('写入临时文件失败: %s' % io_error)
         return temp_preview_path
 
-    def _require_offset(self) -> Optional[int]:
-        """取偏移；未填则弹框要求填写，返回偏移或 None(取消/无效)"""
-        offset = self._field_offset()
-        if offset is not None:
-            return offset
-        offset_fields = self._ask_offset_fields()
-        if offset_fields is None:
-            self.logln('已取消：未填写偏移信息')
-            return None
-        self.first_pdf_var.set(str(offset_fields[0]))
-        self.first_print_var.set(str(offset_fields[1]))
-        offset = self._field_offset()
-        if offset is None:
-            self.logln('提示: 偏移信息无效')
-        return offset
-
     def confirm_ocr_write(self) -> None:
         try:
             pdf_path = self.pdf_var.get().strip()
@@ -834,8 +816,12 @@ class App:
                 offset = 0  # txt 已用 [pN] PDF页号，无需偏移
                 self.logln('txt 已用 [p页号]，无需偏移')
             else:
-                offset = self._require_offset()
+                offset = self._field_offset()
                 if offset is None:
+                    self.logln('写书签必填：正文第一页的PDF页号和印刷页码（txt为印刷页码格式）')
+                    self.ocr_offset_error_label.configure(
+                        text='写书签必填：PDF页号和印刷页码')
+                    self.root.after(5000, lambda: self.ocr_offset_error_label.configure(text=''))
                     return
             parsed_entries = core.levels_from_indent(core.parse_toc(temp_preview_path))
             toc_entries = core.build_toc(parsed_entries, offset)
