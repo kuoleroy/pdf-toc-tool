@@ -131,8 +131,10 @@ class App:
         self.fmt_var = tk.StringVar(value='jpeg')
         ttk.Combobox(self.image_options, textvariable=self.fmt_var, width=7, state='readonly',
                      values=('orig', 'png', 'jpeg')).pack(side='left', padx=4)
-        self.hint(self.image_options, '选"内嵌图片"原样提取；选分辨率按每页渲染。'
-                                     '渲染默认JPEG，内嵌默认orig，JPEG质量固定最高').pack(side='left', padx=4)
+        self.hint(self.image_options, '选"内嵌图片"原样提取（PDF/EPUB/MOBI/AZW3/PRC均支持）；'
+                                     '选分辨率按每页渲染（EPUB/MOBI支持，AZW3不支持）。'
+                                     '渲染默认JPEG，内嵌默认orig，JPEG质量固定最高',
+                  wrap=520).pack(side='left', padx=4)
         self.image_options.pack_forget()
 
         # ---- OCR 识别目录页 ----
