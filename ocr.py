@@ -56,26 +56,22 @@ OCR_DPI_DEFAULT = 150
 _ocr_instances = {}
 
 
-def _mp_ocr_task(q, pdf_path, start_page, end_page, cancel_event, pause_event) -> None:
-    """子进程入口：OCR目录页 + 检测偏移，结果经 multiprocessing.Queue 回传
+def _mp_ocr_task(q, pdf_path, start_page, end_page, cancel_event, pause_event, offset) -> None:
+    """子进程入口：OCR目录页（用给定偏移），结果经 multiprocessing.Queue 回传
 
-    进度：渲染阶段 0~T，识别阶段 T~2T，检测偏移阶段 2T~2T+S（T=页数, S=扫描页数）
+    进度：渲染阶段 0~T，识别阶段 T~2T（T=页数）。结果消息 ('ocr_done', text)。
+    offset 由调用方在识别前填写正文第一页两框计算，行尾直接输出 [pN] PDF页号免偏移。
     """
     try:
         engine = load_ocr()
         text = ocr_to_txt(pdf_path, start_page, end_page, ocr=engine,
+                          offset=offset,
                           progress=lambda done, total, message: q.put(('progress', done, total, message)),
                           cancel_event=cancel_event, pause_event=pause_event)
         # 目录第一行常无页码，补"输入范围开头"的页号兜底（用户以输入开头为基准），
-        # 保证首条书签至少带一个可用的PDF页号（配合偏移即为正文起始页）
-        text = apply_first_line_page_fallback(text, start_page)
+        # 保证首条书签至少带一个可用的PDF页号；pdf_pages=True 输出 [pN] 免偏移
+        text = apply_first_line_page_fallback(text, start_page, pdf_pages=True)
         q.put(('ocr_done', text))
-        offset, first_printed_number = detect_offset(
-            pdf_path, start_page, end_page, ocr=engine,
-            progress=lambda done, total, message: q.put(('progress', done, total, message)),
-            cancel_event=cancel_event, pause_event=pause_event,
-            skip_first=True)
-        q.put(('ocr_offset', offset))
     except Exception as error:
         q.put(('error', type(error).__name__ + ': ' + str(error)))
 

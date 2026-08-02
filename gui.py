@@ -29,6 +29,7 @@ VERSION = '1.2.1'
 PADDING = {'padx': 8, 'pady': 4}
 RE_PAGE_RANGE = re.compile(r'^\s*(\d+)\s*[-—–]\s*(\d+)\s*$')
 RE_IMAGE_PAGE_RANGE = re.compile(r'^\s*(\d+)\s*(?:[-—–]\s*(\d+))?\s*$')
+RE_OCR_PDF_PAGE = re.compile(r'\[p\s*\d+\]')  # txt 中 [pN] 写法：直接PDF页号免偏移
 PDF_EXTENSIONS = {'.pdf', '.epub', '.mobi', '.azw3', '.prc', '.azw'}
 TXT_EXTENSION = '.txt'
 IMAGE_INLINE_OPTION = '内嵌图片'       # 分辨率下拉框：提取PDF内嵌图片（不渲染）
@@ -159,8 +160,19 @@ class App:
         # 每页加[第N页]标记 复选框：暂注释隐藏，后续改为弹框控制
         # ttk.Checkbutton(row_frame, text='每页加[第N页]标记',
         #                 variable=self.ocr_page_mark_var).pack(side='left', padx=8)
-        self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[识别目录]需填正文第一页PDF页号与印刷页码；'
-                  '[导入AI文本]粘贴外部AI识别的目录并格式化为标准txt；结果可编辑后[确认写入]或[保存OCR结果…]',
+        self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[导入AI文本]粘贴外部AI识别的目录并格式化为标准txt；'
+                  '结果可编辑后[确认写入]或[保存OCR结果…]',
+                  wrap=430).pack(side='left', padx=8)
+
+        offset_row = ttk.Frame(ocr_frame)
+        offset_row.pack(fill='x', **PADDING)
+        ttk.Label(offset_row, text='正文第一页 PDF页号:').pack(side='left')
+        self.ocr_pdf_no_var = tk.StringVar()
+        ttk.Entry(offset_row, textvariable=self.ocr_pdf_no_var, width=8).pack(side='left', padx=4)
+        ttk.Label(offset_row, text='印刷页码:').pack(side='left')
+        self.ocr_print_no_var = tk.StringVar()
+        ttk.Entry(offset_row, textvariable=self.ocr_print_no_var, width=8).pack(side='left', padx=4)
+        self.hint(offset_row, '识别目录必填（计算偏移，输出[pN]页号免偏移）；识别文字可留空',
                   wrap=430).pack(side='left', padx=8)
 
         # 进度条与按钮行放在日志区之前，窗口缩小时不遮挡操作按钮
@@ -432,11 +444,13 @@ class App:
             self.logln('该PDF没有书签。')
             messagebox.showinfo('提示', '该PDF没有书签。')
         elif message_kind == 'ocr_done':
+            self._task_end()
             _kind, ocr_result_text = message
             self.ocr_text.delete('1.0', 'end')
             self.ocr_text.insert('1.0', ocr_result_text)
             self.nb.select(1)
-            self.logln('OCR完成。可在"OCR结果"页签修改后点[确认写入]。')
+            self.logln('OCR完成（已按偏移输出[pN]页号）。可在"OCR结果"页签修改后点[确认写入]。')
+            self._notify_ocr_finished()
         elif message_kind == 'ocr_text_done':
             self._task_end()
             _kind, extracted_text = message
@@ -444,14 +458,6 @@ class App:
             self.ocr_text.insert('1.0', extracted_text)
             self.nb.select(1)
             self.logln('文字识别完成。结果在"OCR结果"页签，可编辑后[保存OCR结果…]。')
-            self._notify_ocr_finished()
-        elif message_kind == 'ocr_offset':
-            self._task_end()
-            _kind, offset = message
-            if offset is not None:
-                self.logln('自动检测：PDF页偏移=%d。写入书签时请在"2.操作"填正文第一页的PDF页号和印刷页码。' % offset)
-            else:
-                self.logln('自动检测偏移失败。请在"2.操作"填正文第一页的PDF页号和印刷页码。')
             self._notify_ocr_finished()
         elif message_kind == 'error':
             self._task_end()
@@ -653,6 +659,17 @@ class App:
         start_page, end_page = int(range_match.group(1)), int(range_match.group(2))
         return pdf_path, start_page, end_page
 
+    def _ocr_offset(self) -> Optional[int]:
+        """由OCR卡的"正文第一页PDF页号+印刷页码"计算偏移量；缺失/非法返回None"""
+        try:
+            first_pdf_page = int(self.ocr_pdf_no_var.get().strip())
+            first_printed_page = int(self.ocr_print_no_var.get().strip())
+            if first_pdf_page < 1 or first_printed_page < 1:
+                return None
+            return (first_pdf_page - 1) - first_printed_page
+        except ValueError:
+            return None
+
     def _field_offset(self) -> Optional[int]:
         """由"正文第一页的PDF页号+印刷页码"计算偏移量；缺失/非法返回None"""
         try:
@@ -693,12 +710,16 @@ class App:
             if ocr_args is None:
                 return
             pdf_path, start_page, end_page = ocr_args
+            offset = self._ocr_offset()
+            if offset is None:
+                self.logln('已取消：识别目录必须填写正文第一页的PDF页号和印刷页码')
+                return
             self._last_ocr_type = 'toc'
-            self.logln('加载OCR引擎并识别目录 PDF页 %d-%d …（首次运行下载模型，约需几分钟）'
-                       % (start_page, end_page))
+            self.logln('加载OCR引擎并识别目录 PDF页 %d-%d（偏移=%d）…（首次运行下载模型，约需几分钟）'
+                       % (start_page, end_page, offset))
             self._task_start('ocr', ocr._mp_ocr_task,
                              (pdf_path, start_page, end_page,
-                              self._tm.cancel_event, self._tm.pause_event))
+                              self._tm.cancel_event, self._tm.pause_event, offset))
         except Exception as error:
             self.logln('OCR错误: %s' % error)
             messagebox.showerror('OCR错误', str(error))
@@ -804,9 +825,13 @@ class App:
             if not os.path.isfile(pdf_path):
                 raise ValueError('PDF文件不存在: %s' % pdf_path)
             temp_preview_path = self._prepare_write_from_text(ocr_result_text)
-            offset = self._require_offset()
-            if offset is None:
-                return
+            if RE_OCR_PDF_PAGE.search(ocr_result_text):
+                offset = 0  # txt 已用 [pN] PDF页号，无需偏移
+                self.logln('txt 已用 [p页号]，无需偏移')
+            else:
+                offset = self._require_offset()
+                if offset is None:
+                    return
             parsed_entries = core.levels_from_indent(core.parse_toc(temp_preview_path))
             toc_entries = core.build_toc(parsed_entries, offset)
             self.logln('解析OCR结果: %d 条书签（偏移=%d）' % (len(toc_entries), offset))
