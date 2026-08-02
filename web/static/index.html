@@ -93,6 +93,7 @@
   <div class="row">
     <button id="o_btn">识别目录</button>
     <button id="o_text_btn">识别文字</button>
+    <button onclick="openAiDialog()">导入AI文本</button>
     <!-- 文字识别带[第N页]标记 复选框：暂注释隐藏，后续改为弹框控制
     <label style="min-width:0"><input type="checkbox" id="o_mark"> 文字识别带[第N页]标记</label>
     -->
@@ -100,7 +101,64 @@
   <div class="status" id="o_status"></div>
 </div>
 
+<div id="ai_dialog" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,0.4);z-index:10;align-items:center;justify-content:center;">
+  <div style="background:#fff;padding:16px;border-radius:8px;width:560px;max-width:90vw;">
+    <h3>导入外部AI识别的目录</h3>
+    <p class="hint">粘贴AI识别出的目录文本，每行：标题+页码（支持印刷页码/页码范围/[p页号]），行首缩进表示层级；将格式化为标准格式并下载</p>
+    <textarea id="ai_text" rows="8" style="width:100%;box-sizing:border-box;"></textarea>
+    <div class="row">
+      <button id="ai_btn">格式化并下载</button>
+      <button onclick="closeAiDialog()">取消</button>
+    </div>
+    <div class="status" id="ai_status"></div>
+  </div>
+</div>
+
 <script>
+function openAiDialog() {
+  document.getElementById('ai_dialog').style.display = 'flex';
+  document.getElementById('ai_text').focus();
+}
+function closeAiDialog() {
+  document.getElementById('ai_dialog').style.display = 'none';
+}
+document.getElementById('ai_btn').addEventListener('click', function () {
+  var btn = this, status = document.getElementById('ai_status');
+  var text = document.getElementById('ai_text').value;
+  if (!text.trim()) {
+    status.className = 'status error';
+    status.textContent = '请先粘贴外部AI识别的目录文本';
+    return;
+  }
+  btn.disabled = true;
+  status.className = 'status';
+  status.textContent = '格式化中…';
+  var form = new FormData();
+  form.append('ai_text', text);
+  fetch('/api/format_ai_toc', { method: 'POST', body: form })
+    .then(function (resp) {
+      if (!resp.ok) {
+        return resp.json().then(function (data) {
+          throw new Error(data.detail || ('HTTP ' + resp.status));
+        });
+      }
+      return resp.blob();
+    })
+    .then(function (blob) {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = '格式化目录.txt';
+      a.click();
+      status.className = 'status ok';
+      status.textContent = '完成，已开始下载。';
+    })
+    .catch(function (err) {
+      status.className = 'status error';
+      status.textContent = '失败: ' + err.message;
+    })
+    .then(function () { btn.disabled = false; });
+});
+
 function bindSubmit(btnId, statusId, url, buildForm, filenameHint, onOk) {
   document.getElementById(btnId).addEventListener('click', function () {
     var btn = this, status = document.getElementById(statusId);

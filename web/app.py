@@ -317,4 +317,41 @@ def api_ocr_text(file: UploadFile = File(...), page_range: str = Form(''),
         raise HTTPException(400, str(error))
 
 
+@app.post('/api/format_ai_toc')
+def api_format_ai_toc(ai_text: str = Form('')):
+    """导入外部AI识别的目录文本：按README格式解析，输出标准格式（缩进+标题+点线+页码）"""
+    ai_text = (ai_text or '').strip()
+    if not ai_text:
+        raise HTTPException(400, '请粘贴外部AI识别的目录文本')
+    work_dir = tempfile.mkdtemp(prefix='web_ai_')
+    try:
+        input_path = os.path.join(work_dir, 'ai_toc_input.txt')
+        with open(input_path, 'w', encoding='utf-8') as file_handle:
+            file_handle.write(ai_text)
+        entries = core.parse_toc(input_path)
+        if not entries:
+            raise HTTPException(400, '未能解析出任何目录条目，请检查文本格式（每行：标题+页码，'
+                                     '支持印刷页码/页码范围/[p页号]，行首缩进表示层级）')
+        lines = []
+        for indent_level, title, page_kind, page_number in entries:
+            indent = '　' * indent_level
+            if page_kind == core.KIND_PDF_PAGE:
+                page_str = '[p%d]' % page_number
+            else:
+                page_str = str(page_number)
+            lines.append('%s%s ..... %s' % (indent, title, page_str))
+        output_path = os.path.join(work_dir, '格式化目录.txt')
+        with open(output_path, 'w', encoding='utf-8') as file_handle:
+            file_handle.write('\n'.join(lines) + '\n')
+        return FileResponse(output_path, filename='格式化目录.txt',
+                            media_type='text/plain; charset=utf-8',
+                            background=lambda: _cleanup_work_dir(work_dir))
+    except HTTPException:
+        _cleanup_work_dir(work_dir)
+        raise
+    except Exception as error:
+        _cleanup_work_dir(work_dir)
+        raise HTTPException(400, str(error))
+
+
 app.mount('/', StaticFiles(directory=STATIC_DIR, html=True), name='static')
