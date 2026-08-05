@@ -25,6 +25,8 @@ def _print_usage() -> None:
     print('  %s ocr <pdf> <起始PDF页>-<结束PDF页> [-a] [-t] [-o 输出txt]   (OCR页面；-a=自动检测偏移并打印；-t=识别纯文字[正文等任意页])' % os.path.basename(sys.argv[0]))
     print('  %s ebook <电子书> [输出txt]   (提取EPUB/MOBI/AZW3内置目录，页码为阅读顺序号[p序号])' % os.path.basename(sys.argv[0]))
     print('  %s pdfimages <文件> [输出目录] [-r 分辨率dpi] [-f 格式] [-q 质量]   (提取图片：默认内嵌原样；-r=渲染页面；格式 orig/png/jpeg；-q为JPEG质量；PDF/EPUB/MOBI/AZW3/PRC均可)' % os.path.basename(sys.argv[0]))
+    print('  %s unlock <pdf> <密码> [输出pdf]   (去除密码保护另存；默认<原名>_已解锁.pdf)' % os.path.basename(sys.argv[0]))
+    print('  %s encrypt <pdf> <密码> [输出pdf]   (设置打开密码另存 AES-256；默认<原名>_已加密_密码<密码>.pdf，文件名带密码便于记忆)' % os.path.basename(sys.argv[0]))
 
 
 def _make_progress_writer():
@@ -174,6 +176,22 @@ def main(args: List[str]) -> int:
         sys.stdout.write('\n')
         print('提取 %d 张%s（%s） -> %s' % (image_count, '页面' if render_dpi else '图片',
                                        image_format, output_dir))
+        return 0
+
+    if command == 'unlock' and len(args) >= 3:
+        pdf_path, password = args[1], args[2]
+        output_path = args[3] if len(args) > 3 \
+            else os.path.splitext(pdf_path)[0] + '_已解锁.pdf'
+        core.unlock_pdf(pdf_path, password, output_path)
+        print('解锁完成（已去除密码保护） -> %s' % output_path)
+        return 0
+
+    if command == 'encrypt' and len(args) >= 3:
+        pdf_path, password = args[1], args[2]
+        output_path = args[3] if len(args) > 3 \
+            else os.path.splitext(pdf_path)[0] + '_已加密_密码' + password + '.pdf'
+        core.encrypt_pdf(pdf_path, password, output_path)
+        print('加密完成（打开需密码） -> %s' % output_path)
         return 0
 
     _print_usage()

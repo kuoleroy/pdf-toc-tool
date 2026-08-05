@@ -24,6 +24,8 @@ OCR 后端为 [RapidOCR](https://github.com/RapidAI/RapidOCR)（PaddleOCR 模型
   **识别率有限，仅作应急辅助，推荐优先用"AI 识别 → txt 导入"路线（见下文）**
 - **两种层级来源**：txt 缩进自动定层级；含 `[p页号]` 时直接使用 PDF 页号
 - **安全写入**：默认生成 `_带目录.pdf` 副本（增量保存，原文件不动），也可选择直接写原文件
+- **PDF 解锁 / 加密**：知道密码可去除 PDF 密码保护另存 `_已解锁.pdf`；也可给 PDF 设置打开密码
+  （AES-256）另存 `_已加密_密码<密码>.pdf`，文件名自动带密码便于记忆，原文件不变
 
 ## 快速开始
 
@@ -77,6 +79,12 @@ python pdf_toc_tool.py ebook <电子书> [输出txt]
 
 # 提取PDF/电子书图片（默认提取内嵌图片、原样保存；-r 改为按分辨率渲染每页；-f 格式 orig/png/jpeg；-q JPEG质量；电子书内嵌仅orig）
 python pdf_toc_tool.py pdfimages <文件> [输出目录] [-r 100] [-f jpeg] [-q 80]
+
+# PDF 解锁（去除密码保护另存；默认<原名>_已解锁.pdf）
+python pdf_toc_tool.py unlock <pdf> <密码> [输出pdf]
+
+# PDF 加密（设置打开密码另存 AES-256；默认<原名>_已加密_密码<密码>.pdf，文件名带密码）
+python pdf_toc_tool.py encrypt <pdf> <密码> [输出pdf]
 ```
 
 `copy` 生成 `_带目录.pdf` 副本；`same` 直接增量写原文件（GUI 会先弹备份警告，建议先备份）。

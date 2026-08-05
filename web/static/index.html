@@ -101,6 +101,16 @@
   <div class="status" id="o_status"></div>
 </div>
 
+<div class="card">
+  <h2>5. PDF 解锁 / 加密</h2>
+  <div class="row"><label>PDF文件:</label><input type="file" id="u_file"></div>
+  <div class="row"><label>PDF密码:</label><input type="password" id="u_password" size="20"></div>
+  <div class="row"><button id="u_btn">解锁并下载</button><button id="u_enc_btn">加密并下载</button></div>
+  <div class="status" id="u_status"></div>
+  <div class="status" id="u_enc_status"></div>
+  <div class="hint">解锁生成 _已解锁.pdf；加密生成 _已加密_密码&lt;密码&gt;.pdf（AES-256，文件名自动带密码便于记忆）</div>
+</div>
+
 <div id="ai_dialog" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,0.4);z-index:10;align-items:center;justify-content:center;">
   <div style="background:#fff;padding:16px;border-radius:8px;width:560px;max-width:90vw;">
     <h3>导入外部AI识别的目录</h3>
@@ -270,6 +280,26 @@ bindSubmit('o_text_btn', 'o_status', '/api/ocr_text', function () {
 }, function () {
   var name = document.getElementById('o_file').files[0].name;
   return name.replace(/\.[^.]+$/, '') + '_文字(OCR).txt';
+});
+
+bindSubmit('u_btn', 'u_status', '/api/unlock_pdf', function () {
+  var form = new FormData();
+  form.append('file', document.getElementById('u_file').files[0]);
+  form.append('password', document.getElementById('u_password').value);
+  return form;
+}, function () {
+  var name = document.getElementById('u_file').files[0].name;
+  return name.replace(/\.[^.]+$/, '') + '_已解锁.pdf';
+});
+
+bindSubmit('u_enc_btn', 'u_enc_status', '/api/encrypt_pdf', function () {
+  var form = new FormData();
+  form.append('file', document.getElementById('u_file').files[0]);
+  form.append('password', document.getElementById('u_password').value);
+  return form;
+}, function () {
+  var name = document.getElementById('u_file').files[0].name;
+  return name.replace(/\.[^.]+$/, '') + '_已加密.pdf';
 });
 </script>
 </body>

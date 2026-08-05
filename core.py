@@ -96,6 +96,49 @@ def _mp_write_toc(q, pdf_path, toc, out_mode) -> None:
         q.put(('error', type(error).__name__ + ': ' + str(error)))
 
 
+def unlock_pdf(pdf_path: str, password: str, output_path: str) -> None:
+    """用密码打开加密PDF并另存为无密码副本（保留书签等全部内容）"""
+    doc = fitz.open(pdf_path)
+    try:
+        if not doc.needs_pass:
+            raise ValueError('该PDF没有密码保护，无需解锁')
+        if not doc.authenticate(password):
+            raise ValueError('密码错误，无法解锁')
+        doc.save(output_path, encryption=fitz.PDF_ENCRYPT_NONE)
+    finally:
+        doc.close()
+
+
+def encrypt_pdf(pdf_path: str, password: str, output_path: str) -> None:
+    """给PDF设置打开密码（AES-256），另存为加密副本"""
+    doc = fitz.open(pdf_path)
+    try:
+        if doc.needs_pass:
+            raise ValueError('该PDF已有密码保护，请先解锁再加密')
+        doc.save(output_path, encryption=fitz.PDF_ENCRYPT_AES_256,
+                 user_pw=password, owner_pw=password)
+    finally:
+        doc.close()
+
+
+def _mp_encrypt_pdf(q, pdf_path, password, output_path) -> None:
+    """子进程入口：加密PDF -> ('encrypt_done', output_path)"""
+    try:
+        encrypt_pdf(pdf_path, password, output_path)
+        q.put(('encrypt_done', output_path))
+    except Exception as error:
+        q.put(('error', type(error).__name__ + ': ' + str(error)))
+
+
+def _mp_unlock_pdf(q, pdf_path, password, output_path) -> None:
+    """子进程入口：解锁PDF -> ('unlock_done', output_path)"""
+    try:
+        unlock_pdf(pdf_path, password, output_path)
+        q.put(('unlock_done', output_path))
+    except Exception as error:
+        q.put(('error', type(error).__name__ + ': ' + str(error)))
+
+
 def _mp_extract_toc(q, path, page_fmt) -> None:
     """子进程入口：提取PDF书签或电子书目录 -> ('extract_done', is_ebook, entries, out)"""
     import ebook

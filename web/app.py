@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
 import core
 import ebook
@@ -178,7 +179,7 @@ def api_write_toc(pdf: UploadFile = File(...), toc: UploadFile = File(...),
         output_path = core.write_toc(pdf_path, toc_entries, 'copy')
         return FileResponse(output_path, filename=os.path.basename(output_path),
                             media_type='application/pdf',
-                            background=lambda: _cleanup_work_dir(work_dir))
+                            background=BackgroundTask(_cleanup_work_dir, work_dir))
     except HTTPException:
         _cleanup_work_dir(work_dir)
         raise
@@ -209,7 +210,7 @@ def api_extract_toc(file: UploadFile = File(...), with_page: str = Form('1')):
         return FileResponse(output_path,
                             filename=file_stem + ('_目录.txt' if is_ebook else '_书签.txt'),
                             media_type='text/plain; charset=utf-8',
-                            background=lambda: _cleanup_work_dir(work_dir))
+                            background=BackgroundTask(_cleanup_work_dir, work_dir))
     except HTTPException:
         _cleanup_work_dir(work_dir)
         raise
@@ -241,7 +242,7 @@ def api_extract_images(file: UploadFile = File(...),
         shutil.make_archive(zip_path, 'zip', out_dir)
         return FileResponse(zip_path + '.zip', filename='images.zip',
                             media_type='application/zip',
-                            background=lambda: _cleanup_work_dir(work_dir))
+                            background=BackgroundTask(_cleanup_work_dir, work_dir))
     except HTTPException:
         _cleanup_work_dir(work_dir)
         raise
@@ -278,7 +279,7 @@ def api_ocr_toc(file: UploadFile = File(...), page_range: str = Form(''),
         file_stem = os.path.splitext(os.path.basename(file.filename or 'book.pdf'))[0]
         return FileResponse(output_path, filename=file_stem + '_目录(OCR).txt',
                             media_type='text/plain; charset=utf-8',
-                            background=lambda: _cleanup_work_dir(work_dir))
+                            background=BackgroundTask(_cleanup_work_dir, work_dir))
     except HTTPException:
         _cleanup_work_dir(work_dir)
         raise
@@ -308,7 +309,7 @@ def api_ocr_text(file: UploadFile = File(...), page_range: str = Form(''),
         file_stem = os.path.splitext(os.path.basename(file.filename or 'book.pdf'))[0]
         return FileResponse(output_path, filename=file_stem + '_文字(OCR).txt',
                             media_type='text/plain; charset=utf-8',
-                            background=lambda: _cleanup_work_dir(work_dir))
+                            background=BackgroundTask(_cleanup_work_dir, work_dir))
     except HTTPException:
         _cleanup_work_dir(work_dir)
         raise
@@ -328,7 +329,55 @@ def api_format_ai_toc(ai_text: str = Form('')):
             file_handle.write(formatted)
         return FileResponse(output_path, filename='格式化目录.txt',
                             media_type='text/plain; charset=utf-8',
-                            background=lambda: _cleanup_work_dir(work_dir))
+                            background=BackgroundTask(_cleanup_work_dir, work_dir))
+    except HTTPException:
+        _cleanup_work_dir(work_dir)
+        raise
+    except Exception as error:
+        _cleanup_work_dir(work_dir)
+        raise HTTPException(400, str(error))
+
+
+@app.post('/api/unlock_pdf')
+def api_unlock_pdf(file: UploadFile = File(...), password: str = Form('')):
+    """解锁加密PDF：验证密码后另存为无密码副本"""
+    password = (password or '').strip()
+    if not password:
+        raise HTTPException(400, '请输入PDF密码')
+    work_dir = tempfile.mkdtemp(prefix='web_unlock_')
+    try:
+        source_path = _save_upload(file, work_dir, 'locked.pdf')
+        original_name = file.filename or '文件.pdf'
+        base_name, _extension = os.path.splitext(original_name)
+        output_path = os.path.join(work_dir, 'unlocked.pdf')
+        core.unlock_pdf(source_path, password, output_path)
+        return FileResponse(output_path, filename=base_name + '_已解锁.pdf',
+                            media_type='application/pdf',
+                            background=BackgroundTask(_cleanup_work_dir, work_dir))
+    except HTTPException:
+        _cleanup_work_dir(work_dir)
+        raise
+    except Exception as error:
+        _cleanup_work_dir(work_dir)
+        raise HTTPException(400, str(error))
+
+
+@app.post('/api/encrypt_pdf')
+def api_encrypt_pdf(file: UploadFile = File(...), password: str = Form('')):
+    """给PDF设置打开密码（AES-256），另存为加密副本（文件名带密码便于记忆）"""
+    password = (password or '').strip()
+    if not password:
+        raise HTTPException(400, '请输入PDF密码')
+    work_dir = tempfile.mkdtemp(prefix='web_encrypt_')
+    try:
+        source_path = _save_upload(file, work_dir, 'plain.pdf')
+        original_name = file.filename or '文件.pdf'
+        base_name, _extension = os.path.splitext(original_name)
+        output_path = os.path.join(work_dir, 'encrypted.pdf')
+        core.encrypt_pdf(source_path, password, output_path)
+        return FileResponse(output_path, filename=base_name + '_已加密_密码' + password + '.pdf',
+                            media_type='application/pdf',
+                            background=BackgroundTask(_cleanup_work_dir, work_dir))
     except HTTPException:
         _cleanup_work_dir(work_dir)
         raise

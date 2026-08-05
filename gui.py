@@ -178,6 +178,23 @@ class App:
         self.ocr_offset_error_label = tk.Label(offset_row, text='', fg='#b00020')
         self.ocr_offset_error_label.pack(side='left', padx=4)
 
+        # ---- PDF 解锁 / 加密 ----
+        unlock_frame = ttk.LabelFrame(root, text='PDF 解锁 / 加密')
+        unlock_frame.pack(fill='x', **PADDING)
+        row_frame = ttk.Frame(unlock_frame)
+        row_frame.pack(fill='x', **PADDING)
+        ttk.Label(row_frame, text='PDF密码:').pack(side='left')
+        self.password_var = tk.StringVar()
+        ttk.Entry(row_frame, textvariable=self.password_var, width=20,
+                  show='*').pack(side='left', padx=4)
+        self.btn_unlock = ttk.Button(row_frame, text='解锁并另存…', command=self.do_unlock)
+        self.btn_unlock.pack(side='left', padx=8)
+        self.btn_encrypt = ttk.Button(row_frame, text='加密并另存…', command=self.do_encrypt)
+        self.btn_encrypt.pack(side='left', padx=8)
+        self.hint(row_frame, '使用当前选择的PDF文件；解锁生成"<文件名>_已解锁.pdf"；'
+                  '加密生成"<文件名>_已加密_密码<密码>.pdf"（AES-256，打开需密码，文件名自动带密码便于记忆），原文件不变',
+                  wrap=430).pack(side='left', padx=8)
+
         # 进度条与按钮行放在日志区之前，窗口缩小时不遮挡操作按钮
         progress_frame = ttk.Frame(root)
         progress_frame.pack(fill='x', **PADDING)
@@ -334,6 +351,8 @@ class App:
         self.btn_browse_txt.configure(state='disabled')
         self.btn_ocr.configure(state='disabled')
         self.btn_ocr_text.configure(state='disabled')
+        self.btn_unlock.configure(state='disabled')
+        self.btn_encrypt.configure(state='disabled')
         self._prog_reset()
         self.prog_label.configure(text='启动中…')
         self._tm.start(target, arguments)
@@ -358,6 +377,8 @@ class App:
         self.btn_browse_txt.configure(state='normal')
         self.btn_ocr.configure(state='normal')
         self.btn_ocr_text.configure(state='normal')
+        self.btn_unlock.configure(state='normal')
+        self.btn_encrypt.configure(state='normal')
         self._update_ocr_button_state()
         self.btn_pause.configure(state='disabled')
         self.btn_stop.configure(state='disabled')
@@ -447,6 +468,18 @@ class App:
             self._task_end()
             self.logln('该PDF没有书签。')
             messagebox.showinfo('提示', '该PDF没有书签。')
+        elif message_kind == 'unlock_done':
+            self._task_end()
+            _kind, output_path = message
+            self.logln('解锁完成（已去除密码保护）: %s' % output_path)
+            messagebox.showinfo('完成', '已解锁并保存:\n%s' % output_path)
+            self._open_folder(os.path.dirname(output_path))
+        elif message_kind == 'encrypt_done':
+            self._task_end()
+            _kind, output_path = message
+            self.logln('加密完成（打开需密码）: %s' % output_path)
+            messagebox.showinfo('完成', '已加密并保存:\n%s' % output_path)
+            self._open_folder(os.path.dirname(output_path))
         elif message_kind == 'ocr_done':
             self._task_end()
             _kind, ocr_result_text = message
@@ -652,6 +685,56 @@ class App:
         self.logln('正在读取目录（后台）…')
         self._task_start('extract', core._mp_extract_toc,
                          (source_path, self.e_pdfpage.get()))
+
+    def do_unlock(self) -> None:
+        try:
+            pdf_path = self.pdf_var.get().strip()
+            if not pdf_path:
+                raise ValueError('请先选择PDF文件')
+            if not os.path.isfile(pdf_path):
+                raise ValueError('PDF文件不存在: %s' % pdf_path)
+            password = self.password_var.get()
+            if not password:
+                raise ValueError('请输入PDF密码')
+            save_path = filedialog.asksaveasfilename(
+                title='另存为（解锁后的PDF）',
+                defaultextension='.pdf',
+                initialdir=os.path.dirname(pdf_path) or None,
+                initialfile=os.path.splitext(os.path.basename(pdf_path))[0] + '_已解锁.pdf',
+                filetypes=[('PDF', '*.pdf')])
+            if not save_path:
+                self.logln('已取消：未选择保存路径')
+                return
+            self.logln('正在解锁PDF（后台）…')
+            self._task_start('unlock', core._mp_unlock_pdf, (pdf_path, password, save_path))
+        except Exception as error:
+            self.logln('错误: %s' % error)
+            messagebox.showerror('错误', str(error))
+
+    def do_encrypt(self) -> None:
+        try:
+            pdf_path = self.pdf_var.get().strip()
+            if not pdf_path:
+                raise ValueError('请先选择PDF文件')
+            if not os.path.isfile(pdf_path):
+                raise ValueError('PDF文件不存在: %s' % pdf_path)
+            password = self.password_var.get()
+            if not password:
+                raise ValueError('请输入PDF密码')
+            save_path = filedialog.asksaveasfilename(
+                title='另存为（加密后的PDF）',
+                defaultextension='.pdf',
+                initialdir=os.path.dirname(pdf_path) or None,
+                initialfile=os.path.splitext(os.path.basename(pdf_path))[0] + '_已加密_密码' + password + '.pdf',
+                filetypes=[('PDF', '*.pdf')])
+            if not save_path:
+                self.logln('已取消：未选择保存路径')
+                return
+            self.logln('正在加密PDF（后台）…')
+            self._task_start('encrypt', core._mp_encrypt_pdf, (pdf_path, password, save_path))
+        except Exception as error:
+            self.logln('错误: %s' % error)
+            messagebox.showerror('错误', str(error))
 
     def _get_ocr_args(self) -> Tuple[str, int, int]:
         pdf_path = self.pdf_var.get().strip()
