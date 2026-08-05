@@ -28,7 +28,8 @@ def _print_usage() -> None:
     print('  %s pdfimages <文件> [输出目录] [-r 分辨率dpi] [-f 格式] [-q 质量]   (提取图片：默认内嵌原样；-r=渲染页面；格式 orig/png/jpeg；-q为JPEG质量；PDF/EPUB/MOBI/AZW3/PRC均可)' % os.path.basename(sys.argv[0]))
     print('  %s unlock <pdf> <密码> [输出pdf]   (去除密码保护另存；默认<原名>_已解锁.pdf)' % os.path.basename(sys.argv[0]))
     print('  %s encrypt <pdf> <密码> [输出pdf]   (设置打开密码另存 AES-256；默认<原名>_已加密_密码<密码>.pdf，文件名带密码便于记忆)' % os.path.basename(sys.argv[0]))
-    print('  %s doc2pdf <Word文档> [输出pdf]   (Word转PDF，需Office/WPS或LibreOffice；默认<原名>_转PDF.pdf)' % os.path.basename(sys.argv[0]))
+    print('  %s doc2pdf <Word文档> [输出pdf]   (Word转PDF：.docx免引擎纯Python转换，或装Office/WPS、LibreOffice；默认<原名>_转PDF.pdf)' % os.path.basename(sys.argv[0]))
+    print('  %s doc2html <docx> [输出html]   (.docx转HTML，纯Python免引擎；默认<原名>_转HTML.html)' % os.path.basename(sys.argv[0]))
 
 
 def _make_progress_writer():
@@ -202,6 +203,14 @@ def main(args: List[str]) -> int:
             else os.path.splitext(source_path)[0] + '_转PDF.pdf'
         doc2pdf.doc_to_pdf(source_path, output_path)
         print('转换完成（Word → PDF） -> %s' % output_path)
+        return 0
+
+    if command == 'doc2html' and len(args) >= 2:
+        source_path = args[1]
+        output_path = args[2] if len(args) > 2 \
+            else os.path.splitext(source_path)[0] + '_转HTML.html'
+        doc2pdf.doc_to_html(source_path, output_path)
+        print('转换完成（Word → HTML） -> %s' % output_path)
         return 0
 
     _print_usage()

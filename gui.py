@@ -196,15 +196,17 @@ class App:
                   '加密生成"<文件名>_已加密_密码<密码>.pdf"（AES-256，打开需密码，文件名自动带密码便于记忆），原文件不变',
                   wrap=430).pack(side='left', padx=8)
 
-        # ---- Word 转 PDF ----
-        convert_frame = ttk.LabelFrame(root, text='Word 转 PDF')
+        # ---- Word 转 PDF / HTML ----
+        convert_frame = ttk.LabelFrame(root, text='Word 转 PDF / HTML')
         convert_frame.pack(fill='x', **PADDING)
         row_frame = ttk.Frame(convert_frame)
         row_frame.pack(fill='x', **PADDING)
         self.btn_convert = ttk.Button(row_frame, text='转为PDF…', command=self.do_doc2pdf)
         self.btn_convert.pack(side='left', padx=8)
-        self.hint(row_frame, '把 .doc/.docx/.rtf 转为PDF（使用当前选择的文件）；'
-                  '需安装 Microsoft Office/WPS 或 LibreOffice，原文件不变',
+        self.btn_convert_html = ttk.Button(row_frame, text='转为HTML…', command=self.do_doc2html)
+        self.btn_convert_html.pack(side='left', padx=8)
+        self.hint(row_frame, '把 .docx 转为PDF/HTML（使用当前选择的文件，纯Python免安装引擎）；'
+                  '.doc/.rtf 老格式转PDF需安装 Office/WPS 或 LibreOffice；原文件不变',
                   wrap=430).pack(side='left', padx=8)
 
         # 进度条与按钮行放在日志区之前，窗口缩小时不遮挡操作按钮
@@ -366,6 +368,7 @@ class App:
         self.btn_unlock.configure(state='disabled')
         self.btn_encrypt.configure(state='disabled')
         self.btn_convert.configure(state='disabled')
+        self.btn_convert_html.configure(state='disabled')
         self._prog_reset()
         self.prog_label.configure(text='启动中…')
         self._tm.start(target, arguments)
@@ -393,6 +396,7 @@ class App:
         self.btn_unlock.configure(state='normal')
         self.btn_encrypt.configure(state='normal')
         self.btn_convert.configure(state='normal')
+        self.btn_convert_html.configure(state='normal')
         self._update_ocr_button_state()
         self.btn_pause.configure(state='disabled')
         self.btn_stop.configure(state='disabled')
@@ -497,8 +501,9 @@ class App:
         elif message_kind == 'convert_done':
             self._task_end()
             _kind, output_path = message
-            self.logln('转换完成（Word → PDF）: %s' % output_path)
-            messagebox.showinfo('完成', '已转换为PDF:\n%s' % output_path)
+            self.logln('转换完成（Word → %s）: %s' % (
+                os.path.splitext(output_path)[1].lstrip('.').upper(), output_path))
+            messagebox.showinfo('完成', '已转换并保存:\n%s' % output_path)
             self._open_folder(os.path.dirname(output_path))
         elif message_kind == 'ocr_done':
             self._task_end()
@@ -778,6 +783,31 @@ class App:
                 return
             self.logln('正在转换Word为PDF（后台）…')
             self._task_start('convert', doc2pdf._mp_doc_to_pdf, (source_path, save_path))
+        except Exception as error:
+            self.logln('错误: %s' % error)
+            messagebox.showerror('错误', str(error))
+
+    def do_doc2html(self) -> None:
+        try:
+            source_path = self.pdf_var.get().strip()
+            if not source_path:
+                raise ValueError('请先在"选择文件"里选择Word文档')
+            if not os.path.isfile(source_path):
+                raise ValueError('文件不存在: %s' % source_path)
+            if os.path.splitext(source_path)[1].lower() != '.docx':
+                raise ValueError('纯Python转HTML仅支持 .docx（%s 需安装 Office/WPS 或 LibreOffice）'
+                                 % os.path.splitext(source_path)[1].lower())
+            save_path = filedialog.asksaveasfilename(
+                title='另存为（转换后的HTML）',
+                defaultextension='.html',
+                initialdir=os.path.dirname(source_path) or None,
+                initialfile=os.path.splitext(os.path.basename(source_path))[0] + '_转HTML.html',
+                filetypes=[('HTML', '*.html')])
+            if not save_path:
+                self.logln('已取消：未选择保存路径')
+                return
+            self.logln('正在转换Word为HTML（后台）…')
+            self._task_start('convert', doc2pdf._mp_doc_to_html, (source_path, save_path))
         except Exception as error:
             self.logln('错误: %s' % error)
             messagebox.showerror('错误', str(error))

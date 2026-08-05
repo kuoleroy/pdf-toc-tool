@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Word 文档转 PDF：优先 Office/WPS COM（需 pywin32），回退 LibreOffice soffice 命令行。
+"""Word 文档转 PDF / HTML。
 
-转换引擎检测顺序：
-1. pywin32 + Word.Application / wps.Application COM 自动化
+转换引擎检测顺序（转 PDF）：
+1. Office/WPS COM（需 pywin32）
 2. LibreOffice（soffice，PATH 或常见安装路径）
+3. 纯 Python（仅 .docx：mammoth -> xhtml2pdf，中文字体用内置 CID 字体 STSong-Light，
+   排版与 Word 有差异，无引擎时的简化方案）
 
-两者都不可用时抛出清晰错误，提示安装其一。
+转 HTML（仅 .docx）：mammoth 直接转换，无需任何引擎。
+
+所有引擎都不可用且非 .docx 时，抛出清晰错误提示安装其一。
 """
 import os
 import shutil
@@ -30,6 +34,20 @@ COM_PROG_IDS = ('Word.Application', 'wps.Application')
 
 WD_FORMAT_PDF = 17  # wdFormatPDF，WPS 兼容
 
+PURE_HTML_TEMPLATE = (
+    '<html><head><meta charset="utf-8">'
+    '<style>body { font-family: STSong-Light; }'
+    'table { border-collapse: collapse; } td, th { border: 1px solid #999; padding: 2px 6px; }'
+    '</style></head><body>%s</body></html>')
+
+HTML_TEMPLATE = (
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+    '<title>%s</title>'
+    '<style>body { font-family: "Microsoft YaHei", SimSun, sans-serif; '
+    'max-width: 800px; margin: 0 auto; padding: 16px; }'
+    'table { border-collapse: collapse; } td, th { border: 1px solid #999; padding: 2px 6px; }'
+    '</style></head><body>%s</body></html>')
+
 
 def find_soffice() -> Optional[str]:
     """在 PATH 与常见安装路径中查找 LibreOffice 可执行文件"""
@@ -38,6 +56,15 @@ def find_soffice() -> Optional[str]:
         if resolved and os.path.isfile(resolved):
             return resolved
     return None
+
+
+def _mammoth_html(docx_path: str) -> str:
+    """docx -> HTML（mammoth）；缺少依赖时给出安装提示"""
+    try:
+        import mammoth
+    except ImportError:
+        raise RuntimeError('纯Python转换缺少依赖：请运行 pip install mammoth xhtml2pdf 后重试')
+    return mammoth.convert_to_html(docx_path).value
 
 
 def _convert_via_com(src: str, out: str) -> None:
@@ -88,34 +115,85 @@ def _convert_via_soffice(soffice: str, src: str, out: str) -> None:
         os.replace(produced, out)
 
 
+def _convert_via_pure(docx_path: str, out: str) -> None:
+    """纯Python：mammoth -> xhtml2pdf（中文字体 STSong-Light，无嵌入）"""
+    try:
+        from xhtml2pdf import pisa
+    except ImportError:
+        raise RuntimeError('纯Python转换缺少依赖：请运行 pip install mammoth xhtml2pdf 后重试')
+    html = _mammoth_html(docx_path)
+    styled = PURE_HTML_TEMPLATE % html
+    with open(out, 'wb') as file_handle:
+        result = pisa.CreatePDF(styled, dest=file_handle)
+    if result.err:
+        raise RuntimeError('纯Python转换失败（xhtml2pdf 错误码 %d）' % result.err)
+
+
 def doc_to_pdf(src: str, out: str) -> str:
-    """把 Word 文档转为 PDF（优先 COM，回退 LibreOffice），返回输出路径"""
+    """把 Word 文档转为 PDF（COM -> LibreOffice -> 纯Python），返回输出路径"""
     if not os.path.isfile(src):
         raise ValueError('文件不存在: %s' % src)
     extension = os.path.splitext(src)[1].lower()
     if extension not in DOC_EXTENSIONS:
         raise ValueError('仅支持 Word 文档: %s' % ' '.join(sorted(DOC_EXTENSIONS)))
+    com_error = None
     if HAS_WIN32COM:
         try:
             _convert_via_com(src, out)
             return out
         except RuntimeError:
             pass
-        except Exception as com_error:
-            soffice = find_soffice()
-            if soffice is None:
-                raise ValueError('Office/WPS 转换失败: %s' % com_error)
+        except Exception as error:
+            com_error = error
     soffice = find_soffice()
     if soffice:
-        _convert_via_soffice(soffice, src, out)
-        return out
-    raise RuntimeError('未检测到可用的转换引擎：请安装 Microsoft Office/WPS（或 LibreOffice）后再试')
+        try:
+            _convert_via_soffice(soffice, src, out)
+            return out
+        except Exception:
+            pass
+    if extension == '.docx':
+        try:
+            _convert_via_pure(src, out)
+            return out
+        except RuntimeError:
+            raise
+    if com_error is not None:
+        raise RuntimeError('Office/WPS 转换失败: %s' % com_error)
+    raise RuntimeError(
+        '未检测到可用的转换引擎，且该格式（%s）不支持纯Python转换：'
+        '请安装 Microsoft Office/WPS 或 LibreOffice 后再试' % extension)
+
+
+def doc_to_html(docx_path: str, out: str) -> str:
+    """把 .docx 转为完整 HTML 页面（mammoth，无需任何引擎），返回输出路径"""
+    if not os.path.isfile(docx_path):
+        raise ValueError('文件不存在: %s' % docx_path)
+    extension = os.path.splitext(docx_path)[1].lower()
+    if extension != '.docx':
+        raise ValueError('纯Python转HTML仅支持 .docx（%s 需安装 Office/WPS 或 LibreOffice）'
+                         % extension)
+    html = _mammoth_html(docx_path)
+    title = os.path.splitext(os.path.basename(docx_path))[0]
+    full_html = HTML_TEMPLATE % (title, html)
+    with open(out, 'w', encoding='utf-8') as file_handle:
+        file_handle.write(full_html)
+    return out
 
 
 def _mp_doc_to_pdf(q, src, out) -> None:
     """子进程入口：Word转PDF -> ('convert_done', out)"""
     try:
         doc_to_pdf(src, out)
+        q.put(('convert_done', out))
+    except Exception as error:
+        q.put(('error', type(error).__name__ + ': ' + str(error)))
+
+
+def _mp_doc_to_html(q, src, out) -> None:
+    """子进程入口：Word转HTML -> ('convert_done', out)"""
+    try:
+        doc_to_html(src, out)
         q.put(('convert_done', out))
     except Exception as error:
         q.put(('error', type(error).__name__ + ': ' + str(error)))

@@ -408,4 +408,25 @@ def api_doc_to_pdf(file: UploadFile = File(...)):
         raise HTTPException(400, str(error))
 
 
+@app.post('/api/doc_to_html')
+def api_doc_to_html(file: UploadFile = File(...)):
+    """Word 文档转 HTML（mammoth，无需引擎）"""
+    work_dir = tempfile.mkdtemp(prefix='web_doc2html_')
+    try:
+        original_name = file.filename or '文档.docx'
+        source_path = _save_upload(file, work_dir, 'source' + os.path.splitext(original_name)[1])
+        base_name, _extension = os.path.splitext(original_name)
+        output_path = os.path.join(work_dir, 'converted.html')
+        doc2pdf.doc_to_html(source_path, output_path)
+        return FileResponse(output_path, filename=base_name + '_转HTML.html',
+                            media_type='text/html; charset=utf-8',
+                            background=BackgroundTask(_cleanup_work_dir, work_dir))
+    except HTTPException:
+        _cleanup_work_dir(work_dir)
+        raise
+    except Exception as error:
+        _cleanup_work_dir(work_dir)
+        raise HTTPException(400, str(error))
+
+
 app.mount('/', StaticFiles(directory=STATIC_DIR, html=True), name='static')
