@@ -26,6 +26,8 @@ OCR 后端为 [RapidOCR](https://github.com/RapidAI/RapidOCR)（PaddleOCR 模型
 - **安全写入**：默认生成 `_带目录.pdf` 副本（增量保存，原文件不动），也可选择直接写原文件
 - **PDF 解锁 / 加密**：知道密码可去除 PDF 密码保护另存 `_已解锁.pdf`；也可给 PDF 设置打开密码
   （AES-256）另存 `_已加密_密码<密码>.pdf`，文件名自动带密码便于记忆，原文件不变
+- **Word 转 PDF**：`.doc/.docx/.rtf` 转为 PDF 另存 `_转PDF.pdf`；自动检测转换引擎：
+  优先 Office/WPS（COM 自动化），回退 LibreOffice（soffice），两者都未安装时提示安装其一
 
 ## 快速开始
 
@@ -85,6 +87,9 @@ python pdf_toc_tool.py unlock <pdf> <密码> [输出pdf]
 
 # PDF 加密（设置打开密码另存 AES-256；默认<原名>_已加密_密码<密码>.pdf，文件名带密码）
 python pdf_toc_tool.py encrypt <pdf> <密码> [输出pdf]
+
+# Word 转 PDF（需安装 Office/WPS 或 LibreOffice；默认<原名>_转PDF.pdf）
+python pdf_toc_tool.py doc2pdf <Word文档> [输出pdf]
 ```
 
 `copy` 生成 `_带目录.pdf` 副本；`same` 直接增量写原文件（GUI 会先弹备份警告，建议先备份）。

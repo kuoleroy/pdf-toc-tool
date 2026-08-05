@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
 import core
+import doc2pdf
 import ebook
 
 app = FastAPI(title='PDF 书签工具（网页版）', version='1.1.0')
@@ -376,6 +377,27 @@ def api_encrypt_pdf(file: UploadFile = File(...), password: str = Form('')):
         output_path = os.path.join(work_dir, 'encrypted.pdf')
         core.encrypt_pdf(source_path, password, output_path)
         return FileResponse(output_path, filename=base_name + '_已加密_密码' + password + '.pdf',
+                            media_type='application/pdf',
+                            background=BackgroundTask(_cleanup_work_dir, work_dir))
+    except HTTPException:
+        _cleanup_work_dir(work_dir)
+        raise
+    except Exception as error:
+        _cleanup_work_dir(work_dir)
+        raise HTTPException(400, str(error))
+
+
+@app.post('/api/doc_to_pdf')
+def api_doc_to_pdf(file: UploadFile = File(...)):
+    """Word 文档转 PDF：优先 Office/WPS COM，回退 LibreOffice"""
+    work_dir = tempfile.mkdtemp(prefix='web_doc2pdf_')
+    try:
+        original_name = file.filename or '文档.docx'
+        source_path = _save_upload(file, work_dir, 'source' + os.path.splitext(original_name)[1])
+        base_name, _extension = os.path.splitext(original_name)
+        output_path = os.path.join(work_dir, 'converted.pdf')
+        doc2pdf.doc_to_pdf(source_path, output_path)
+        return FileResponse(output_path, filename=base_name + '_转PDF.pdf',
                             media_type='application/pdf',
                             background=BackgroundTask(_cleanup_work_dir, work_dir))
     except HTTPException:

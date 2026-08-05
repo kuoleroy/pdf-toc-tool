@@ -111,6 +111,14 @@
   <div class="hint">解锁生成 _已解锁.pdf；加密生成 _已加密_密码&lt;密码&gt;.pdf（AES-256，文件名自动带密码便于记忆）</div>
 </div>
 
+<div class="card">
+  <h2>6. Word 转 PDF</h2>
+  <div class="row"><label>Word文件:</label><input type="file" id="d_file" accept=".doc,.docx,.rtf,.dot,.dotx"></div>
+  <div class="row"><button id="d_btn">转为PDF并下载</button></div>
+  <div class="status" id="d_status"></div>
+  <div class="hint">支持 .doc/.docx/.rtf；需服务器安装 Microsoft Office/WPS 或 LibreOffice</div>
+</div>
+
 <div id="ai_dialog" style="display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,0.4);z-index:10;align-items:center;justify-content:center;">
   <div style="background:#fff;padding:16px;border-radius:8px;width:560px;max-width:90vw;">
     <h3>导入外部AI识别的目录</h3>
@@ -300,6 +308,15 @@ bindSubmit('u_enc_btn', 'u_enc_status', '/api/encrypt_pdf', function () {
 }, function () {
   var name = document.getElementById('u_file').files[0].name;
   return name.replace(/\.[^.]+$/, '') + '_已加密.pdf';
+});
+
+bindSubmit('d_btn', 'd_status', '/api/doc_to_pdf', function () {
+  var form = new FormData();
+  form.append('file', document.getElementById('d_file').files[0]);
+  return form;
+}, function () {
+  var name = document.getElementById('d_file').files[0].name;
+  return name.replace(/\.[^.]+$/, '') + '_转PDF.pdf';
 });
 </script>
 </body>
