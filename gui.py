@@ -73,8 +73,9 @@ class App:
         self._register_drop(self.pdf_entry)
         self.btn_browse_pdf = ttk.Button(
             row_frame, text='浏览…',
-            command=lambda: self.browse(self.pdf_var, '选择PDF/电子书文件',
-                                        [('PDF/电子书', '*.pdf *.epub *.mobi *.azw3 *.prc'), ('全部', '*.*')]))
+            command=lambda: self.browse(self.pdf_var, '选择PDF/电子书/Word文件',
+                                        [('PDF/电子书/Word', '*.pdf *.epub *.mobi *.azw3 *.prc *.docx *.doc *.rtf'),
+                                         ('全部', '*.*')]))
         self.btn_browse_pdf.pack(side='left')
         row_frame = ttk.Frame(file_frame)
         row_frame.pack(fill='x', **PADDING)
@@ -297,6 +298,8 @@ class App:
         for dropped_path in dropped_paths:
             file_extension = os.path.splitext(dropped_path)[1].lower()
             if file_extension in PDF_EXTENSIONS and pdf_path is None:
+                pdf_path = dropped_path
+            elif file_extension in doc2pdf.DOC_EXTENSIONS and pdf_path is None:
                 pdf_path = dropped_path
             elif file_extension == TXT_EXTENSION and txt_path is None:
                 txt_path = dropped_path
