@@ -68,6 +68,37 @@ OCR_PREVIEW_FILE_NAME = '_pdf_toc_ocr_preview.txt'  # 确认写入时的临时�
 # 全局主题样式实例（ttkbootstrap 下启用）
 _BOOT = None
 
+# ---- 字体（仿 opencode 质感：中文字体 + 整体放大） ----
+FONT_NAME = 'LXGW WenKai'      # 首选字体（已安装时 Tk 内注册名是"霞鹜文楷"）
+FONT_FALLBACK = 'Microsoft YaHei UI'
+UI_FONT_SIZE = 11              # UI 基准字号（原 9）
+TITLE_FONT_SIZE = 13           # 状态栏标题
+NAV_FONT_SIZE = 12             # 任务导航
+FONT = (FONT_NAME, UI_FONT_SIZE)
+
+
+def _apply_global_font(root: tk.Misc) -> None:
+    """检测并应用全局字体：LXGW WenKai（回退微软雅黑），放大字号；
+    同时改 TkDefaultFont（tk.* 控件）与 ttkbootstrap 主题样式（ttk.* 控件）"""
+    global FONT
+    family = FONT_NAME
+    try:
+        import tkinter.font as tkfont
+        families = tkfont.families(root)
+        if family not in families and '霞鹜文楷' in families:
+            family = '霞鹜文楷'
+        if family not in families:
+            family = FONT_FALLBACK
+    except Exception:
+        family = FONT_FALLBACK
+    FONT = (family, UI_FONT_SIZE)
+    try:
+        tkfont.nametofont('TkDefaultFont').configure(family=family, size=UI_FONT_SIZE)
+    except Exception:
+        pass
+    if _BOOT is not None:
+        _BOOT.configure('.', font=FONT)
+
 
 def _btn(parent, bootstyle=None, **kwargs) -> ttk.Button:
     """主题化按钮：ttkbootstrap 下支持 bootstyle，未安装时回退普通 ttk"""
@@ -97,6 +128,7 @@ def _Label(parent, **kwargs) -> tk.Widget:
 class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
+        _apply_global_font(root)  # 独立实例化（如测试）时也保证字体生效
         root.title('PDF 书签工具 v%s' % VERSION)
         root.geometry('980x820')
         root.minsize(880, 620)
@@ -131,15 +163,15 @@ class App:
         status_bar = tk.Frame(self.root, bg=SB_BG)
         status_bar.pack(fill='x')
         tk.Label(status_bar, text='◆ PDF书签工具', bg=SB_BG, fg='#e8e8e8',
-                 font=('Microsoft YaHei UI', 10, 'bold')).pack(side='left', padx=(10, 4), pady=6)
+                 font=(FONT[0], TITLE_FONT_SIZE, 'bold')).pack(side='left', padx=(10, 4), pady=6)
         tk.Label(status_bar, text='v%s' % VERSION, bg=SB_BG, fg=SB_FG_DIM,
-                 font=('Consolas', 9)).pack(side='left', pady=6)
+                 font=FONT).pack(side='left', pady=6)
         self._sb_task_var = tk.StringVar()
         tk.Label(status_bar, textvariable=self._sb_task_var, bg=SB_BG, fg=SB_FG_ACCENT,
-                 font=('Microsoft YaHei UI', 9)).pack(side='left', padx=18, pady=6)
+                 font=FONT).pack(side='left', padx=18, pady=6)
         self._sb_file_var = tk.StringVar(value='未选择文件')
         tk.Label(status_bar, textvariable=self._sb_file_var, bg=SB_BG, fg=SB_FG,
-                 font=('Consolas', 9)).pack(side='left', fill='x', expand=True, pady=6)
+                 font=FONT).pack(side='left', fill='x', expand=True, pady=6)
         self._sb_theme_btn = _btn(status_bar, 'dark', text='主题: 暗色', padding=(10, 3),
                                   command=self._toggle_theme)
         self._sb_theme_btn.pack(side='right', padx=10, pady=4)
@@ -153,11 +185,11 @@ class App:
         nav_frame.pack(side='left', fill='y')
         nav_frame.pack_propagate(False)
         tk.Label(nav_frame, text='任 务', bg=NAV_BG, fg=SB_FG_DIM,
-                 font=('Microsoft YaHei UI', 9)).pack(fill='x', pady=(8, 2))
+                 font=FONT).pack(fill='x', pady=(8, 2))
         self.nav = tk.Listbox(nav_frame, bg=NAV_BG, fg=NAV_FG,
                               selectbackground=NAV_SEL_BG, selectforeground='#ffffff',
                               activestyle='none', bd=0, relief='flat',
-                              highlightthickness=0, font=('Consolas', 10))
+                              highlightthickness=0, font=(FONT[0], NAV_FONT_SIZE))
         for index, item_name in enumerate(NAV_ITEMS, start=1):
             self.nav.insert('end', '%d  %s' % (index, item_name))
         self.nav.pack(fill='both', expand=True, padx=6, pady=(0, 8))
@@ -212,7 +244,7 @@ class App:
         self.nb = ttk.Notebook(log_frame)
         self.nb.pack(fill='both', expand=True, padx=6, pady=6)
         log_tab = ttk.Frame(self.nb)
-        self.log = tk.Text(log_tab, font=('Consolas', 9))
+        self.log = tk.Text(log_tab, font=FONT)
         scrollbar = ttk.Scrollbar(log_tab, command=self.log.yview)
         self.log.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side='right', fill='y')
@@ -220,7 +252,7 @@ class App:
         self.nb.add(log_tab, text='日志')
         ocr_tab = ttk.Frame(self.nb)
         # undo=True 启用撤销栈，配合 Ctrl+Z/Ctrl+Y 编辑 OCR 结果（默认 Text 无此能力）
-        self.ocr_text = tk.Text(ocr_tab, font=('Consolas', 9), wrap='none', undo=True,
+        self.ocr_text = tk.Text(ocr_tab, font=FONT, wrap='none', undo=True,
                                 maxundo=-1)
         self.ocr_text.bind('<Control-z>', self._undo_ocr_text)
         self.ocr_text.bind('<Control-y>', self._redo_ocr_text)
@@ -1291,6 +1323,7 @@ def main() -> int:
     root = TkinterDnD.Tk() if HAS_DND else tk.Tk()
     if HAS_TTKB:
         _BOOT = tb.Style(theme=DEFAULT_THEME)
+    _apply_global_font(root)
     App(root)
     root.mainloop()
     return 0
