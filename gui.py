@@ -33,7 +33,7 @@ except ImportError:
 
 VERSION = '1.2.1'
 
-DEFAULT_THEME = 'darkly'           # 默认暗色主题（opencode 风格）
+DEFAULT_THEME = 'cosmo'            # 默认亮色主题（打开即亮色）
 DARK_THEME = 'darkly'              # 暗色主题
 LIGHT_THEME = 'cosmo'              # 亮色主题
 THEME_CHOICES = (DEFAULT_THEME, LIGHT_THEME)
@@ -637,9 +637,12 @@ class App:
                 current_style = str(child.cget('style'))
                 boot = OUTLINE_STYLE_TO_BOOT.get(current_style)
                 if boot is None:
-                    # 亮色主题下的形态为 '<boot>.TButton'
+                    # 亮色主题下形态为 '<变体>-outline.TButton'（darkly）或 '<变体>.Outline.TButton'（cosmo）
+                    lower_style = current_style.lower()
                     for outline_boot in OUTLINE_DARK_STYLES:
-                        if current_style == '%s.TButton' % outline_boot:
+                        variant = outline_boot.split('-')[0]
+                        if lower_style in ('%s-outline.tbutton' % variant,
+                                           '%s.outline.tbutton' % variant):
                             boot = outline_boot
                             break
                 if boot:
