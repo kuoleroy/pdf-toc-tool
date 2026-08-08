@@ -49,6 +49,9 @@ SB_FG_ACCENT = '#7fb3d5'
 NAV_BG = '#1e1f24'
 NAV_FG = '#c9cbd1'
 NAV_SEL_BG = '#2f3542'
+NAV_WIDTH_DEFAULT = 170    # 导航栏默认宽度
+NAV_WIDTH_MIN = 120        # 导航栏可拖拽宽度范围
+NAV_WIDTH_MAX = 280
 
 # ---- 常量 ----
 PADDING = {'padx': 8, 'pady': 4}
@@ -238,9 +241,10 @@ class App:
         main.grid(row=1, column=0, sticky='nsew', padx=8, pady=4)
 
         # ---- 左侧任务导航 ----
-        nav_frame = ttk.Frame(main, width=170)
+        nav_frame = ttk.Frame(main, width=NAV_WIDTH_DEFAULT)
         nav_frame.pack(side='left', fill='y')
         nav_frame.pack_propagate(False)
+        self._nav_frame = nav_frame
         self._nav_title = tk.Label(nav_frame, text='任 务', bg=NAV_BG, fg=SB_FG_DIM,
                                    font=FONT)
         self._nav_title.pack(fill='x', pady=(8, 2))
@@ -252,6 +256,12 @@ class App:
             self.nav.insert('end', '%d  %s' % (index, item_name))
         self.nav.pack(fill='both', expand=True, padx=6, pady=(0, 8))
         self.nav.bind('<<ListboxSelect>>', self._on_nav_select)
+
+        # 导航宽度拖动手柄（范围限制见 _sash_drag）
+        self._sash = tk.Frame(main, width=5, bg=NAV_BG, cursor='sb_h_double_arrow')
+        self._sash.pack(side='left', fill='y')
+        self._sash.bind('<Button-1>', self._sash_press)
+        self._sash.bind('<B1-Motion>', self._sash_drag)
 
         # ---- 右侧内容区 ----
         right = ttk.Frame(main)
@@ -543,6 +553,22 @@ class App:
         if selection:
             self._go_page(selection[0] + 1)
 
+    # ---- 导航宽度拖拽 ----
+
+    def _sash_press(self, _event) -> str:
+        self._sash_start_x = _event.x_root
+        self._sash_start_width = self._nav_frame.winfo_width()
+        return 'break'
+
+    def _sash_drag(self, event) -> str:
+        if not hasattr(self, '_sash_start_x'):
+            return 'break'
+        delta = event.x_root - self._sash_start_x
+        new_width = max(NAV_WIDTH_MIN, min(NAV_WIDTH_MAX,
+                                           self._sash_start_width + delta))
+        self._nav_frame.configure(width=new_width)
+        return 'break'
+
     def _go_page(self, page_number: int) -> None:
         """切换任务页：显示对应参数面板，联动底部执行按钮与状态栏"""
         if self._nav_guard or page_number not in self._pages:
@@ -646,6 +672,7 @@ class App:
         self._nav_title.configure(bg=nav_bg, fg=dim_fg)
         self.nav.configure(bg=nav_bg, fg=nav_fg, selectbackground=nav_sel_bg,
                            selectforeground=nav_sel_fg)
+        self._sash.configure(bg=nav_bg)
         if HAS_TTKB:
             self._sb_theme_btn.configure(
                 bootstyle=theme_boot,
