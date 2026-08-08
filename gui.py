@@ -33,9 +33,22 @@ except ImportError:
 
 VERSION = '1.2.1'
 
-DEFAULT_THEME = 'cosmo'          # 默认亮色主题
-DARK_THEME = 'darkly'            # 暗色主题
-THEME_CHOICES = (DEFAULT_THEME, DARK_THEME)
+DEFAULT_THEME = 'darkly'           # 默认暗色主题（opencode 风格）
+DARK_THEME = 'darkly'              # 暗色主题
+LIGHT_THEME = 'cosmo'              # 亮色主题
+THEME_CHOICES = (DEFAULT_THEME, LIGHT_THEME)
+
+# 左侧导航任务（仿 opencode 面板导航）
+NAV_ITEMS = ('写入书签', '提取目录/图片', 'OCR 识别', 'PDF 解锁/加密', 'Word 转换')
+
+# 状态栏配色（固定深色，不随主题变化，仿 opencode 顶栏）
+SB_BG = '#1e1f24'
+SB_FG = '#d5d5d8'
+SB_FG_DIM = '#8a8f98'
+SB_FG_ACCENT = '#7fb3d5'
+NAV_BG = '#1e1f24'
+NAV_FG = '#c9cbd1'
+NAV_SEL_BG = '#2f3542'
 
 # ---- 常量 ----
 PADDING = {'padx': 8, 'pady': 4}
@@ -85,8 +98,8 @@ class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title('PDF 书签工具 v%s' % VERSION)
-        root.geometry('920x780')
-        root.minsize(860, 600)
+        root.geometry('980x820')
+        root.minsize(880, 620)
 
         self._tm = taskmgr.TaskManager()
         self._task = None
@@ -94,19 +107,74 @@ class App:
         self._paused = False
         self._has_progress = False
         self._last_ocr_type: Optional[str] = None  # 最近一次OCR类型: 'toc'目录 / 'text'文字
+        self._current_page = 1
+        self._nav_guard = False
 
         # 输入框格式限制：非法字符（汉字/英文/符号）输入时不显示
         self._vcmd_digits = (root.register(self._validate_digits), '%P')
         self._vcmd_range = (root.register(self._validate_range_input), '%P')
 
-        # ---- 1. 选择文件 ----
-        file_frame = _labelframe(root, '1. 选择文件', 'primary')
+        self._build_statusbar()        # 顶部状态栏（仿 opencode 顶栏）
+        self._build_nav_and_content()  # 左侧任务导航 + 右侧内容区
+        self._build_bottom()           # 进度 / 操作按钮 / 快捷键提示
+        self._bind_keys()
+
+        self._build_theme_menu()
+        self._apply_theme_palette(DEFAULT_THEME)
+        self._go_page(1)
+        self._update_ocr_button_state()
+
+    # ---- 布局 ----
+
+    def _build_statusbar(self) -> None:
+        """顶部状态栏：程序名 | 当前任务 | 当前文件 | 主题切换（固定深色，仿 opencode）"""
+        status_bar = tk.Frame(self.root, bg=SB_BG)
+        status_bar.pack(fill='x')
+        tk.Label(status_bar, text='◆ PDF书签工具', bg=SB_BG, fg='#e8e8e8',
+                 font=('Microsoft YaHei UI', 10, 'bold')).pack(side='left', padx=(10, 4), pady=6)
+        tk.Label(status_bar, text='v%s' % VERSION, bg=SB_BG, fg=SB_FG_DIM,
+                 font=('Consolas', 9)).pack(side='left', pady=6)
+        self._sb_task_var = tk.StringVar()
+        tk.Label(status_bar, textvariable=self._sb_task_var, bg=SB_BG, fg=SB_FG_ACCENT,
+                 font=('Microsoft YaHei UI', 9)).pack(side='left', padx=18, pady=6)
+        self._sb_file_var = tk.StringVar(value='未选择文件')
+        tk.Label(status_bar, textvariable=self._sb_file_var, bg=SB_BG, fg=SB_FG,
+                 font=('Consolas', 9)).pack(side='left', fill='x', expand=True, pady=6)
+        self._sb_theme_btn = _btn(status_bar, 'dark', text='主题: 暗色', padding=(10, 3),
+                                  command=self._toggle_theme)
+        self._sb_theme_btn.pack(side='right', padx=10, pady=4)
+
+    def _build_nav_and_content(self) -> None:
+        main = ttk.Frame(self.root)
+        main.pack(fill='both', expand=True, **PADDING)
+
+        # ---- 左侧任务导航 ----
+        nav_frame = ttk.Frame(main, width=170)
+        nav_frame.pack(side='left', fill='y')
+        nav_frame.pack_propagate(False)
+        tk.Label(nav_frame, text='任 务', bg=NAV_BG, fg=SB_FG_DIM,
+                 font=('Microsoft YaHei UI', 9)).pack(fill='x', pady=(8, 2))
+        self.nav = tk.Listbox(nav_frame, bg=NAV_BG, fg=NAV_FG,
+                              selectbackground=NAV_SEL_BG, selectforeground='#ffffff',
+                              activestyle='none', bd=0, relief='flat',
+                              highlightthickness=0, font=('Consolas', 10))
+        for index, item_name in enumerate(NAV_ITEMS, start=1):
+            self.nav.insert('end', '%d  %s' % (index, item_name))
+        self.nav.pack(fill='both', expand=True, padx=6, pady=(0, 8))
+        self.nav.bind('<<ListboxSelect>>', self._on_nav_select)
+
+        # ---- 右侧内容区 ----
+        right = ttk.Frame(main)
+        right.pack(side='left', fill='both', expand=True)
+
+        # 文件面板（所有任务共享）
+        file_frame = _labelframe(right, '文件', 'secondary')
         file_frame.pack(fill='x', **PADDING)
         self.pdf_var = tk.StringVar()
         self.txt_var = tk.StringVar()
         row_frame = ttk.Frame(file_frame)
         row_frame.pack(fill='x', **PADDING)
-        ttk.Label(row_frame, text='PDF文件:').pack(side='left')
+        ttk.Label(row_frame, text='PDF/电子书/Word:').pack(side='left')
         self.pdf_entry = ttk.Entry(row_frame, textvariable=self.pdf_var)
         self.pdf_entry.pack(side='left', fill='x', expand=True, padx=4)
         self._register_drop(self.pdf_entry)
@@ -127,164 +195,19 @@ class App:
             command=lambda: self.browse(self.txt_var, '选择目录txt', [('文本', '*.txt'), ('全部', '*.*')]))
         self.btn_browse_txt.pack(side='left')
 
-        # ---- 2. 操作 ----
-        action_frame = _labelframe(root, '2. 操作', 'primary')
-        action_frame.pack(fill='x', **PADDING)
-        self.mode = tk.StringVar(value='write')
-        row_frame = ttk.Frame(action_frame)
-        row_frame.pack(fill='x', **PADDING)
-        ttk.Radiobutton(row_frame, text='写入书签（txt → PDF）', variable=self.mode, value='write',
-                        command=self.on_mode).pack(side='left', padx=8)
-        ttk.Radiobutton(row_frame, text='提取书签/电子书目录', variable=self.mode, value='extract',
-                        command=self.on_mode).pack(side='left', padx=8)
-        ttk.Radiobutton(row_frame, text='提取图片', variable=self.mode, value='images',
-                        command=self.on_mode).pack(side='left', padx=8)
-        action_options_frame = ttk.Frame(action_frame)
-        action_options_frame.pack(fill='x', **PADDING)
-        self.outmode_var = tk.StringVar(value='copy')
-        self.write_options = ttk.Frame(action_options_frame)
-        self.write_options.pack(side='left', padx=12)
-        ttk.Radiobutton(self.write_options, text='生成_带目录.pdf副本', variable=self.outmode_var,
-                        value='copy').pack(side='left')
-        ttk.Radiobutton(self.write_options, text='直接写原文件', variable=self.outmode_var,
-                        value='same').pack(side='left')
-        self.extract_options = ttk.Frame(action_options_frame)
-        self.extract_options.pack(side='left', padx=12)
-        self.e_pdfpage = tk.BooleanVar(value=True)
-        self.e_pdfpage_check = ttk.Checkbutton(self.extract_options,
-                                               text='行尾带[PDF页号]',
-                                               variable=self.e_pdfpage)
-        self.e_pdfpage_check.pack(side='left')
-        self.hint(self.extract_options, 'EPUB/MOBI无页码,[p序号]=阅读顺序').pack(side='left', padx=4)
-        self.pdf_var.trace_add('write', self._on_pdf_file_changed)
-        self.extract_options.pack_forget()
-        self.image_options = ttk.Frame(action_options_frame)
-        self.image_options.pack(side='left', padx=12)
-        ttk.Label(self.image_options, text='页号(空=全部):').pack(side='left')
-        self.page_range_var = tk.StringVar()
-        ttk.Entry(self.image_options, textvariable=self.page_range_var, width=8,
-                  validate='key', validatecommand=self._vcmd_range).pack(side='left', padx=4)
-        ttk.Label(self.image_options, text='分辨率:').pack(side='left')
-        self.resolution_var = tk.StringVar(value=DEFAULT_IMAGE_RESOLUTION)
-        ttk.Combobox(self.image_options, textvariable=self.resolution_var, width=8,
-                     state='readonly',
-                     values=(IMAGE_INLINE_OPTION, '200', '300', '400', '600')).pack(side='left', padx=4)
-        self.resolution_var.trace_add('write', self._on_resolution_changed)
-        ttk.Label(self.image_options, text='格式:').pack(side='left')
-        self.fmt_var = tk.StringVar(value='jpeg')
-        ttk.Combobox(self.image_options, textvariable=self.fmt_var, width=7, state='readonly',
-                     values=('orig', 'png', 'jpeg')).pack(side='left', padx=4)
-        self.hint(self.image_options, '选"内嵌图片"原样提取（PDF/EPUB/MOBI/AZW3/PRC均支持）；'
-                                     '选分辨率按每页渲染（EPUB/MOBI支持，AZW3不支持）。'
-                                     '渲染默认JPEG，内嵌默认orig，JPEG质量固定最高，'
-                                     '电子书内嵌的页号范围按图片出现顺序',
-                  wrap=520).pack(side='left', padx=4)
-        self.image_options.pack_forget()
+        # 参数区（随导航切换）
+        self._config_host = ttk.Frame(right)
+        self._config_host.pack(fill='x')
+        self._pages = {
+            1: self._page_write(),
+            2: self._page_extract(),
+            3: self._page_ocr(),
+            4: self._page_pdf_tool(),
+            5: self._page_convert(),
+        }
 
-        # ---- OCR 识别目录页 ----
-        ocr_frame = _labelframe(root, 'OCR 识别目录页', 'primary')
-        ocr_frame.pack(fill='x', **PADDING)
-        row_frame = ttk.Frame(ocr_frame)
-        row_frame.pack(fill='x', **PADDING)
-        ttk.Label(row_frame, text='页号范围:').pack(side='left')
-        self.ocr_range_var = tk.StringVar()
-        ttk.Entry(row_frame, textvariable=self.ocr_range_var, width=12,
-                  validate='key', validatecommand=self._vcmd_range).pack(side='left', padx=4)
-        self.btn_ocr = _btn(row_frame, 'primary', text='识别目录', command=self.do_ocr)
-        self.btn_ocr.pack(side='left', padx=8)
-        self.btn_ocr_text = _btn(row_frame, 'primary-outline', text='识别文字',
-                                 command=self.do_ocr_text)
-        self.btn_ocr_text.pack(side='left', padx=8)
-        self.btn_ai_import = _btn(row_frame, 'info-outline', text='导入AI文本',
-                                  command=self.do_ai_import)
-        self.btn_ai_import.pack(side='left', padx=8)
-        self.ocr_page_mark_var = tk.BooleanVar(value=False)
-        # 每页加[第N页]标记 复选框：暂注释隐藏，后续改为弹框控制
-        # ttk.Checkbutton(row_frame, text='每页加[第N页]标记',
-        #                 variable=self.ocr_page_mark_var).pack(side='left', padx=8)
-        self.hint(row_frame, '识别中可点底部[暂停]/[停止]；[识别目录]需先填下方"正文第一页"两框；'
-                  '[导入AI文本]粘贴外部AI识别的目录并格式化为标准txt；结果可编辑后[确认写入]或[保存OCR结果…]',
-                  wrap=430).pack(side='left', padx=8)
-
-        offset_row = ttk.Frame(ocr_frame)
-        offset_row.pack(fill='x', **PADDING)
-        ttk.Label(offset_row, text='正文第一页 PDF页号:').pack(side='left')
-        self.first_pdf_var = tk.StringVar()
-        ttk.Entry(offset_row, textvariable=self.first_pdf_var, width=8,
-                  validate='key', validatecommand=self._vcmd_digits).pack(side='left', padx=4)
-        ttk.Label(offset_row, text='印刷页码:').pack(side='left')
-        self.first_print_var = tk.StringVar()
-        ttk.Entry(offset_row, textvariable=self.first_print_var, width=8,
-                  validate='key', validatecommand=self._vcmd_digits).pack(side='left', padx=4)
-        self.hint(offset_row, '目录后第一个正文页，识别目录/写书签共用，必填，自动算偏移',
-                  wrap=430).pack(side='left', padx=8)
-        self.ocr_offset_error_label = tk.Label(offset_row, text='', fg='#b00020')
-        self.ocr_offset_error_label.pack(side='left', padx=4)
-
-        # ---- PDF 解锁 / 加密 ----
-        unlock_frame = _labelframe(root, 'PDF 解锁 / 加密', 'primary')
-        unlock_frame.pack(fill='x', **PADDING)
-        row_frame = ttk.Frame(unlock_frame)
-        row_frame.pack(fill='x', **PADDING)
-        ttk.Label(row_frame, text='PDF密码:').pack(side='left')
-        self.password_var = tk.StringVar()
-        ttk.Entry(row_frame, textvariable=self.password_var, width=20,
-                  show='*').pack(side='left', padx=4)
-        self.btn_unlock = _btn(row_frame, 'primary', text='解锁并另存…',
-                               command=self.do_unlock)
-        self.btn_unlock.pack(side='left', padx=8)
-        self.btn_encrypt = _btn(row_frame, 'primary', text='加密并另存…',
-                                command=self.do_encrypt)
-        self.btn_encrypt.pack(side='left', padx=8)
-        self.hint(row_frame, '使用当前选择的PDF文件；解锁生成"<文件名>_已解锁.pdf"；'
-                  '加密生成"<文件名>_已加密_密码<密码>.pdf"（AES-256，打开需密码，文件名自动带密码便于记忆），原文件不变',
-                  wrap=430).pack(side='left', padx=8)
-
-        # ---- Word 转 PDF / HTML ----
-        convert_frame = _labelframe(root, 'Word 转 PDF / HTML', 'primary')
-        convert_frame.pack(fill='x', **PADDING)
-        row_frame = ttk.Frame(convert_frame)
-        row_frame.pack(fill='x', **PADDING)
-        self.btn_convert = _btn(row_frame, 'primary', text='转为PDF…', command=self.do_doc2pdf)
-        self.btn_convert.pack(side='left', padx=8)
-        self.btn_convert_html = _btn(row_frame, 'primary-outline', text='转为HTML…',
-                                     command=self.do_doc2html)
-        self.btn_convert_html.pack(side='left', padx=8)
-        self.hint(row_frame, '把 .docx 转为PDF/HTML（使用当前选择的文件，纯Python免安装引擎）；'
-                  '.doc/.rtf 老格式转PDF需安装 Office/WPS 或 LibreOffice；原文件不变',
-                  wrap=430).pack(side='left', padx=8)
-
-        # 进度条与按钮行放在日志区之前，窗口缩小时不遮挡操作按钮
-        progress_frame = ttk.Frame(root)
-        progress_frame.pack(fill='x', **PADDING)
-        self.prog_label = ttk.Label(progress_frame, text='', anchor='w')
-        self.prog_label.pack(side='left')
-        self.prog = ttk.Progressbar(progress_frame, mode='determinate', maximum=100)
-        self.prog.pack(side='left', fill='x', expand=True)
-
-        button_frame = ttk.Frame(root)
-        button_frame.pack(fill='x', **PADDING)
-        self.btn_confirm = _btn(button_frame, 'success', text='写入OCR结果', width=14,
-                                command=self.confirm_ocr_write)
-        self.btn_confirm.pack(side='left', padx=4)
-        self.btn_save_ocr = _btn(button_frame, 'secondary-outline', text='保存OCR结果…',
-                                 width=14, command=self.save_ocr_txt)
-        self.btn_save_ocr.pack(side='left', padx=4)
-        run_button_frame = ttk.Frame(root)
-        run_button_frame.pack(fill='x', **PADDING)
-        self.btn_run = _btn(run_button_frame, 'primary', text='执行', width=8, command=self.run)
-        self.btn_run.pack(side='right', padx=4)
-        self.btn_pause = _btn(run_button_frame, 'warning', text='暂停', width=6,
-                              command=self.toggle_pause, state='disabled')
-        self.btn_pause.pack(side='right', padx=4)
-        self.btn_stop = _btn(run_button_frame, 'danger', text='停止', width=6,
-                             command=self.stop_task, state='disabled')
-        self.btn_stop.pack(side='right', padx=4)
-        _btn(run_button_frame, 'secondary-outline', text='清空日志', width=8,
-             command=lambda: self.log.delete('1.0', 'end')).pack(side='right', padx=4)
-
-        # ---- 3. 预览 / 日志 ----
-        log_frame = _labelframe(root, '3. 预览 / 日志', 'primary')
+        # 预览 / 日志（共享）
+        log_frame = _labelframe(right, '预览 / 日志', 'secondary')
         log_frame.pack(fill='both', expand=True, **PADDING)
         self.nb = ttk.Notebook(log_frame)
         self.nb.pack(fill='both', expand=True, padx=6, pady=6)
@@ -308,9 +231,253 @@ class App:
         ocr_scrollbar.pack(side='right', fill='y')
         self.ocr_text.pack(side='left', fill='both', expand=True)
         self.nb.add(ocr_tab, text='OCR结果（可编辑）')
-        self._build_theme_menu()
-        self._apply_theme_palette(DEFAULT_THEME)
-        self._update_ocr_button_state()
+
+        # 文件变化联动（各页面构建完成后注册）
+        self.pdf_var.trace_add('write', self._on_pdf_file_changed)
+        self._on_pdf_file_changed()
+
+    # ---- 任务页面 ----
+
+    def _page_write(self) -> ttk.Frame:
+        """任务1：写入书签（txt → PDF）"""
+        page = ttk.Frame(self._config_host)
+        action_frame = _labelframe(page, '写入书签（txt → PDF）', 'primary')
+        action_frame.pack(fill='x', **PADDING)
+        self.mode = tk.StringVar(value='write')
+        self.outmode_var = tk.StringVar(value='copy')
+        row_frame = ttk.Frame(action_frame)
+        row_frame.pack(fill='x', **PADDING)
+        ttk.Radiobutton(row_frame, text='生成_带目录.pdf副本', variable=self.outmode_var,
+                        value='copy').pack(side='left', padx=8)
+        ttk.Radiobutton(row_frame, text='直接写原文件', variable=self.outmode_var,
+                        value='same').pack(side='left', padx=8)
+        self.write_options = action_frame
+        self.hint(page, 'txt 每行 "页码 标题"，支持 [pN] 直接指定PDF页号免偏移；'
+                        '缩进（Tab/空格）自动转为多级书签', wrap=620).pack(anchor='w', **PADDING)
+        return page
+
+    def _page_extract(self) -> ttk.Frame:
+        """任务2：提取书签 / 提取图片"""
+        page = ttk.Frame(self._config_host)
+        self.mode = tk.StringVar(value='extract')
+        mode_frame = _labelframe(page, '提取内容', 'primary')
+        mode_frame.pack(fill='x', **PADDING)
+        row_frame = ttk.Frame(mode_frame)
+        row_frame.pack(fill='x', **PADDING)
+        ttk.Radiobutton(row_frame, text='提取书签/电子书目录', variable=self.mode, value='extract',
+                        command=self.on_mode).pack(side='left', padx=8)
+        ttk.Radiobutton(row_frame, text='提取图片', variable=self.mode, value='images',
+                        command=self.on_mode).pack(side='left', padx=8)
+        options_row = ttk.Frame(mode_frame)
+        options_row.pack(fill='x', **PADDING)
+        self.extract_options = ttk.Frame(options_row)
+        self.extract_options.pack(side='left', padx=12)
+        self.e_pdfpage = tk.BooleanVar(value=True)
+        self.e_pdfpage_check = ttk.Checkbutton(self.extract_options,
+                                               text='行尾带[PDF页号]',
+                                               variable=self.e_pdfpage)
+        self.e_pdfpage_check.pack(side='left')
+        self.hint(self.extract_options, 'EPUB/MOBI无页码,[p序号]=阅读顺序').pack(side='left', padx=4)
+        self.image_options = ttk.Frame(options_row)
+        self.image_options.pack(side='left', padx=12)
+        ttk.Label(self.image_options, text='页号(空=全部):').pack(side='left')
+        self.page_range_var = tk.StringVar()
+        ttk.Entry(self.image_options, textvariable=self.page_range_var, width=8,
+                  validate='key', validatecommand=self._vcmd_range).pack(side='left', padx=4)
+        ttk.Label(self.image_options, text='分辨率:').pack(side='left')
+        self.resolution_var = tk.StringVar(value=DEFAULT_IMAGE_RESOLUTION)
+        ttk.Combobox(self.image_options, textvariable=self.resolution_var, width=8,
+                     state='readonly',
+                     values=(IMAGE_INLINE_OPTION, '200', '300', '400', '600')).pack(side='left', padx=4)
+        self.resolution_var.trace_add('write', self._on_resolution_changed)
+        ttk.Label(self.image_options, text='格式:').pack(side='left')
+        self.fmt_var = tk.StringVar(value='jpeg')
+        ttk.Combobox(self.image_options, textvariable=self.fmt_var, width=7, state='readonly',
+                     values=('orig', 'png', 'jpeg')).pack(side='left', padx=4)
+        self.image_options.pack_forget()
+        self.hint(page, '目录提取：PDF书签 / EPUB·MOBI电子书目录；'
+                        '图片提取：内嵌图片或按分辨率渲染（AZW3不支持渲染）', wrap=620).pack(anchor='w', **PADDING)
+        return page
+
+    def _page_ocr(self) -> ttk.Frame:
+        """任务3：OCR 识别目录页"""
+        page = ttk.Frame(self._config_host)
+        ocr_frame = _labelframe(page, 'OCR 识别', 'primary')
+        ocr_frame.pack(fill='x', **PADDING)
+        row_frame = ttk.Frame(ocr_frame)
+        row_frame.pack(fill='x', **PADDING)
+        ttk.Label(row_frame, text='页号范围:').pack(side='left')
+        self.ocr_range_var = tk.StringVar()
+        ttk.Entry(row_frame, textvariable=self.ocr_range_var, width=12,
+                  validate='key', validatecommand=self._vcmd_range).pack(side='left', padx=4)
+        self.btn_ocr = _btn(row_frame, 'primary', text='识别目录', command=self.do_ocr)
+        self.btn_ocr.pack(side='left', padx=8)
+        self.btn_ocr_text = _btn(row_frame, 'primary-outline', text='识别文字',
+                                 command=self.do_ocr_text)
+        self.btn_ocr_text.pack(side='left', padx=8)
+        self.btn_ai_import = _btn(row_frame, 'info-outline', text='导入AI文本',
+                                  command=self.do_ai_import)
+        self.btn_ai_import.pack(side='left', padx=8)
+        self.ocr_page_mark_var = tk.BooleanVar(value=False)
+        offset_row = ttk.Frame(ocr_frame)
+        offset_row.pack(fill='x', **PADDING)
+        ttk.Label(offset_row, text='正文第一页 PDF页号:').pack(side='left')
+        self.first_pdf_var = tk.StringVar()
+        ttk.Entry(offset_row, textvariable=self.first_pdf_var, width=8,
+                  validate='key', validatecommand=self._vcmd_digits).pack(side='left', padx=4)
+        ttk.Label(offset_row, text='印刷页码:').pack(side='left')
+        self.first_print_var = tk.StringVar()
+        ttk.Entry(offset_row, textvariable=self.first_print_var, width=8,
+                  validate='key', validatecommand=self._vcmd_digits).pack(side='left', padx=4)
+        self.hint(offset_row, '目录后第一个正文页，识别目录/写书签共用，必填，自动算偏移',
+                  wrap=430).pack(side='left', padx=8)
+        self.ocr_offset_error_label = tk.Label(offset_row, text='', fg='#b00020')
+        self.ocr_offset_error_label.pack(side='left', padx=4)
+        self.hint(page, '识别中可点底部[暂停]/[停止]；[识别目录]需先填"正文第一页"两框；'
+                        '结果自动带[pN]页号，可在"OCR结果"页签编辑（Ctrl+Z/Ctrl+S）',
+                  wrap=620).pack(anchor='w', **PADDING)
+        result_row = ttk.Frame(page)
+        result_row.pack(fill='x', **PADDING)
+        self.btn_confirm = _btn(result_row, 'success', text='写入OCR结果', width=14,
+                                command=self.confirm_ocr_write)
+        self.btn_confirm.pack(side='left', padx=4)
+        self.btn_save_ocr = _btn(result_row, 'secondary-outline', text='保存OCR结果…',
+                                 width=14, command=self.save_ocr_txt)
+        self.btn_save_ocr.pack(side='left', padx=4)
+        return page
+
+    def _page_pdf_tool(self) -> ttk.Frame:
+        """任务4：PDF 解锁 / 加密"""
+        page = ttk.Frame(self._config_host)
+        unlock_frame = _labelframe(page, 'PDF 解锁 / 加密', 'primary')
+        unlock_frame.pack(fill='x', **PADDING)
+        row_frame = ttk.Frame(unlock_frame)
+        row_frame.pack(fill='x', **PADDING)
+        ttk.Label(row_frame, text='PDF密码:').pack(side='left')
+        self.password_var = tk.StringVar()
+        ttk.Entry(row_frame, textvariable=self.password_var, width=20,
+                  show='*').pack(side='left', padx=4)
+        self.btn_unlock = _btn(row_frame, 'primary', text='解锁并另存…',
+                               command=self.do_unlock)
+        self.btn_unlock.pack(side='left', padx=8)
+        self.btn_encrypt = _btn(row_frame, 'primary', text='加密并另存…',
+                                command=self.do_encrypt)
+        self.btn_encrypt.pack(side='left', padx=8)
+        self.hint(page, '使用"文件"面板中选择的PDF；解锁生成"<名>_已解锁.pdf"；'
+                        '加密生成"<名>_已加密_密码<密码>.pdf"（AES-256），原文件不变',
+                  wrap=620).pack(anchor='w', **PADDING)
+        return page
+
+    def _page_convert(self) -> ttk.Frame:
+        """任务5：Word 转 PDF / HTML"""
+        page = ttk.Frame(self._config_host)
+        convert_frame = _labelframe(page, 'Word 转换', 'primary')
+        convert_frame.pack(fill='x', **PADDING)
+        row_frame = ttk.Frame(convert_frame)
+        row_frame.pack(fill='x', **PADDING)
+        self.btn_convert = _btn(row_frame, 'primary', text='转为PDF…', command=self.do_doc2pdf)
+        self.btn_convert.pack(side='left', padx=8)
+        self.btn_convert_html = _btn(row_frame, 'primary-outline', text='转为HTML…',
+                                     command=self.do_doc2html)
+        self.btn_convert_html.pack(side='left', padx=8)
+        self.hint(page, '把 .docx 转为PDF/HTML（纯Python免安装引擎）；'
+                        '.doc/.rtf 老格式转PDF需安装 Office/WPS 或 LibreOffice；原文件不变',
+                  wrap=620).pack(anchor='w', **PADDING)
+        return page
+
+    # ---- 底部操作区 ----
+
+    def _build_bottom(self) -> None:
+        # 进度条与按钮行放在日志区之前，窗口缩小时不遮挡操作按钮
+        progress_frame = ttk.Frame(self.root)
+        progress_frame.pack(fill='x', **PADDING)
+        self.prog_label = ttk.Label(progress_frame, text='', anchor='w')
+        self.prog_label.pack(side='left')
+        self.prog = ttk.Progressbar(progress_frame, mode='determinate', maximum=100)
+        self.prog.pack(side='left', fill='x', expand=True)
+
+        button_frame = ttk.Frame(self.root)
+        button_frame.pack(fill='x', **PADDING)
+        _btn(button_frame, 'secondary-outline', text='清空日志', width=8,
+             command=lambda: self.log.delete('1.0', 'end')).pack(side='left', padx=4)
+        self.btn_run = _btn(button_frame, 'primary', text='执行', width=8, command=self.run)
+        self.btn_run.pack(side='right', padx=4)
+        self.btn_pause = _btn(button_frame, 'warning', text='暂停', width=6,
+                              command=self.toggle_pause, state='disabled')
+        self.btn_pause.pack(side='right', padx=4)
+        self.btn_stop = _btn(button_frame, 'danger', text='停止', width=6,
+                             command=self.stop_task, state='disabled')
+        self.btn_stop.pack(side='right', padx=4)
+
+        # 底部快捷键提示条（仿 opencode 底部状态栏）
+        self.hint(self.root, '[1-5] 切换任务    [Enter] 执行    [Ctrl+T] 切换主题    '
+                             '[Tab] 切换焦点    文件可直接拖入输入框',
+                  wrap=0).pack(anchor='w', **PADDING)
+
+    # ---- 导航切换与键盘 ----
+
+    def _bind_keys(self) -> None:
+        for index in range(1, len(NAV_ITEMS) + 1):
+            self.root.bind('<Key-%d>' % index, lambda event, n=index: self._nav_key(n))
+        self.root.bind('<Control-t>', self._toggle_theme_key)
+        self.root.bind('<Control-T>', self._toggle_theme_key)
+
+    def _nav_key(self, page_number: int) -> Optional[str]:
+        """数字键切换任务：光标在输入框/下拉框内时放行（不拦截输入）"""
+        focus = self.root.focus_get()
+        if isinstance(focus, (ttk.Entry, ttk.Combobox)):
+            return None
+        self._go_page(page_number)
+        return 'break'
+
+    def _toggle_theme_key(self, _event=None) -> str:
+        self._toggle_theme()
+        return 'break'
+
+    def _toggle_theme(self) -> None:
+        """状态栏按钮 / Ctrl+T：亮暗主题一键切换"""
+        if not HAS_TTKB:
+            self.logln('未安装 ttkbootstrap，主题切换不可用（pip install ttkbootstrap）')
+            return
+        current = self._theme_var.get()
+        new_theme = LIGHT_THEME if current == DARK_THEME else DARK_THEME
+        self._set_theme(new_theme)
+
+    def _on_nav_select(self, _event=None) -> None:
+        if self._nav_guard:
+            return
+        selection = self.nav.curselection()
+        if selection:
+            self._go_page(selection[0] + 1)
+
+    def _go_page(self, page_number: int) -> None:
+        """切换任务页：显示对应参数面板，联动底部执行按钮与状态栏"""
+        if self._nav_guard or page_number not in self._pages:
+            return
+        self._nav_guard = True
+        try:
+            self._current_page = page_number
+            for page_index, page_frame in self._pages.items():
+                if page_index == page_number:
+                    page_frame.pack(fill='x', **PADDING)
+                else:
+                    page_frame.pack_forget()
+            self.nav.selection_clear(0, 'end')
+            self.nav.selection_set(page_number - 1)
+            self.nav.see(page_number - 1)
+            self._sb_task_var.set('任务: %s' % NAV_ITEMS[page_number - 1])
+            self._update_run_button()
+        finally:
+            self._nav_guard = False
+
+    def _update_run_button(self) -> None:
+        """按当前任务设置底部主操作按钮（执行/识别目录/禁用）"""
+        if self._current_page in (1, 2):
+            self.btn_run.configure(text='执行', command=self.run, state='normal')
+        elif self._current_page == 3:
+            self.btn_run.configure(text='识别目录', command=self.do_ocr, state='normal')
+        else:
+            self.btn_run.configure(text='执行', state='disabled')
 
     def _build_theme_menu(self) -> None:
         """顶部菜单：主题切换（ttkbootstrap 可用时）"""
@@ -321,18 +488,20 @@ class App:
         theme_menu = tk.Menu(menu_bar, tearoff=0)
         for theme_name in THEME_CHOICES:
             theme_menu.add_radiobutton(
-                label=('亮色' if theme_name == DEFAULT_THEME else '暗色'),
+                label=('亮色' if theme_name == LIGHT_THEME else '暗色'),
                 value=theme_name, variable=self._theme_var,
                 command=lambda name=theme_name: self._set_theme(name))
         menu_bar.add_cascade(label='主题', menu=theme_menu)
         self.root.config(menu=menu_bar)
 
     def _set_theme(self, theme_name: str) -> None:
-        """切换亮/暗主题；同时联动日志/OCR文本等原生控件配色"""
+        """切换亮/暗主题；同时联动日志/OCR文本等原生控件配色与状态栏按钮"""
         if _BOOT is None:
             return
         _BOOT.theme_use(theme_name)
         self._theme_var.set(theme_name)
+        self._sb_theme_btn.configure(
+            text='主题: 暗色' if 'dark' in theme_name else '主题: 亮色')
         self._apply_theme_palette(theme_name)
 
     def _apply_theme_palette(self, theme_name: str) -> None:
@@ -439,7 +608,7 @@ class App:
         self._has_progress = False
         self.btn_pause.configure(text='暂停', state='normal')
         self.btn_stop.configure(state='normal')
-        for button in (self.btn_run, self.btn_confirm, self.btn_save_ocr):
+        for button in (self.btn_confirm, self.btn_save_ocr):
             button.configure(state='disabled')
         self.btn_browse_pdf.configure(state='disabled')
         self.btn_browse_txt.configure(state='disabled')
@@ -467,7 +636,8 @@ class App:
         self.prog.stop()
         self.prog.configure(mode='determinate', value=0)
         self.prog_label.configure(text='')
-        for button in (self.btn_run, self.btn_confirm, self.btn_save_ocr):
+        self._update_run_button()
+        for button in (self.btn_confirm, self.btn_save_ocr):
             button.configure(state='normal')
         self.btn_browse_pdf.configure(state='normal')
         self.btn_browse_txt.configure(state='normal')
@@ -705,10 +875,12 @@ class App:
             self.fmt_var.set('jpeg')
 
     def _on_pdf_file_changed(self, *_args) -> None:
-        """所选文件变化时联动：复选框（PDF必带页号置灰；电子书=阅读顺序号）与OCR按钮（仅可渲染格式）"""
+        """所选文件变化时联动：状态栏文件显示、复选框（PDF必带页号置灰；电子书=阅读顺序号）与OCR按钮（仅可渲染格式）"""
         if not hasattr(self, 'btn_ocr'):
             return
-        file_ext = os.path.splitext(self.pdf_var.get().strip())[1].lower()
+        file_path = self.pdf_var.get().strip()
+        self._sb_file_var.set(file_path or '未选择文件')
+        file_ext = os.path.splitext(file_path)[1].lower()
         if file_ext in core.EBOOK_INLINE_EXTENSIONS:
             self.e_pdfpage_check.configure(text='行尾带[阅读顺序号]')
         else:
