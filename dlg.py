@@ -1,18 +1,26 @@
 # -*- coding: utf-8 -*-
-"""对话框组件：模态输入弹框"""
+"""对话框组件：模态输入弹框（ttkbootstrap 主题，可选依赖）"""
 import os
 import re
 import tkinter as tk
 from tkinter import filedialog, ttk
 from typing import Optional, Tuple
 
-
-def _digits_only(text: str) -> bool:
-    return bool(re.fullmatch(r'\d*', text))
-
-
-def _range_input(text: str) -> bool:
-    return bool(re.fullmatch(r'\d*[—–\-]?\d*', text))
+try:
+    import ttkbootstrap as tb
+    HAS_TTKB = True
+    _Root = tb.Toplevel
+    _Frame = tb.Frame
+    _Label = tb.Label
+    _Entry = tb.Entry
+    _Button = tb.Button
+except ImportError:
+    HAS_TTKB = False
+    _Root = tk.Toplevel
+    _Frame = tk.Frame
+    _Label = tk.Label
+    _Entry = tk.Entry
+    _Button = tk.Button
 
 
 def _digits_only(text: str) -> bool:
@@ -30,21 +38,21 @@ def ask_ocr_args(parent: tk.Tk, pdf_path_var: tk.StringVar,
     返回 (pdf_path, range_text)；取消返回 None。
     边界情况：PDF 不存在或范围格式非法时在弹框内提示，不关闭弹框。
     """
-    dialog = tk.Toplevel(parent)
+    dialog = _Root(parent)
     dialog.title('填写OCR识别信息（必填）')
     dialog.transient(parent)
     dialog.grab_set()
     dialog.resizable(False, False)
     range_cmd = (dialog.register(_range_input), '%P')
 
-    tk.Label(dialog, text='请选择PDF文件并填写目录页的PDF页号范围:',
-             anchor='w').pack(fill='x', padx=12, pady=(10, 4))
+    _Label(dialog, text='请选择PDF文件并填写目录页的PDF页号范围:',
+           anchor='w').pack(fill='x', padx=12, pady=(10, 4))
 
-    file_row = tk.Frame(dialog)
+    file_row = _Frame(dialog)
     file_row.pack(fill='x', padx=12, pady=4)
-    tk.Label(file_row, text='PDF文件:').pack(side='left')
+    _Label(file_row, text='PDF文件:').pack(side='left')
     pdf_path_input_var = tk.StringVar(value=pdf_path_var.get())
-    tk.Entry(file_row, textvariable=pdf_path_input_var, width=40).pack(
+    _Entry(file_row, textvariable=pdf_path_input_var, width=40).pack(
         side='left', fill='x', expand=True, padx=4)
 
     def on_browse() -> None:
@@ -55,17 +63,18 @@ def ask_ocr_args(parent: tk.Tk, pdf_path_var: tk.StringVar,
         if selected_path:
             pdf_path_input_var.set(selected_path)
 
-    tk.Button(file_row, text='浏览…', command=on_browse).pack(side='left')
+    _Button(file_row, text='浏览…', command=on_browse).pack(side='left')
 
-    range_row = tk.Frame(dialog)
+    range_row = _Frame(dialog)
     range_row.pack(padx=12, pady=4)
-    tk.Label(range_row, text='目录页PDF页号:').pack(side='left')
+    _Label(range_row, text='目录页PDF页号:').pack(side='left')
     range_input_var = tk.StringVar(value=ocr_range_var.get())
-    tk.Entry(range_row, textvariable=range_input_var, width=12,
-             validate='key', validatecommand=range_cmd).pack(side='left', padx=4)
-    tk.Label(range_row, text='如 11-16（目录页在PDF中的页号）', fg='gray').pack(side='left')
+    _Entry(range_row, textvariable=range_input_var, width=12,
+           validate='key', validatecommand=range_cmd).pack(side='left', padx=4)
+    _Label(range_row, text='如 11-16（目录页在PDF中的页号）',
+           foreground='#8a8f98').pack(side='left')
 
-    error_label = tk.Label(dialog, text='', fg='red')
+    error_label = _Label(dialog, text='', foreground='#dc3545')
     error_label.pack(padx=12, anchor='w')
 
     PAGE_RANGE_PATTERN = re.compile(r'^\s*\d+\s*[-—–]\s*\d+\s*$')
@@ -87,10 +96,10 @@ def ask_ocr_args(parent: tk.Tk, pdf_path_var: tk.StringVar,
         dialog_result['value'] = None
         dialog.destroy()
 
-    button_row = tk.Frame(dialog)
+    button_row = _Frame(dialog)
     button_row.pack(padx=12, pady=8)
-    tk.Button(button_row, text='确定', command=on_confirm, width=10).pack(side='left', padx=4)
-    tk.Button(button_row, text='取消', command=on_cancel, width=10).pack(side='left', padx=4)
+    _Button(button_row, text='确定', command=on_confirm, width=10).pack(side='left', padx=4)
+    _Button(button_row, text='取消', command=on_cancel, width=10).pack(side='left', padx=4)
 
     dialog.update_idletasks()
     dialog.geometry('+%d+%d' % (parent.winfo_rootx() + 40, parent.winfo_rooty() + 120))

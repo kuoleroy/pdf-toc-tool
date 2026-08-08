@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""tkinter 图形界面"""
+"""tkinter 图形界面（ttkbootstrap 现代主题，可选依赖）"""
 import os
 import re
 import tkinter as tk
@@ -24,7 +24,18 @@ try:
 except ImportError:
     TkinterDnD = None
 
+# 现代主题（可选依赖）：未安装时回退 ttk 默认主题，功能不受影响
+try:
+    import ttkbootstrap as tb
+    HAS_TTKB = True
+except ImportError:
+    HAS_TTKB = False
+
 VERSION = '1.2.1'
+
+DEFAULT_THEME = 'cosmo'          # 默认亮色主题
+DARK_THEME = 'darkly'            # 暗色主题
+THEME_CHOICES = (DEFAULT_THEME, DARK_THEME)
 
 # ---- 常量 ----
 PADDING = {'padx': 8, 'pady': 4}
@@ -40,6 +51,34 @@ LOG_PREVIEW_COUNT = 20       # 日志区预览的最大条数
 WATCHDOG_INTERVAL_MS = 4000  # 长时间无进度时的提示更新间隔
 POLL_INTERVAL_MS = 100       # 消息队列轮询间隔
 OCR_PREVIEW_FILE_NAME = '_pdf_toc_ocr_preview.txt'  # 确认写入时的临时解析文件
+
+# 全局主题样式实例（ttkbootstrap 下启用）
+_BOOT = None
+
+
+def _btn(parent, bootstyle=None, **kwargs) -> ttk.Button:
+    """主题化按钮：ttkbootstrap 下支持 bootstyle，未安装时回退普通 ttk"""
+    if HAS_TTKB:
+        return tb.Button(parent, bootstyle=bootstyle, **kwargs)
+    kwargs.pop('bootstyle', None)
+    return ttk.Button(parent, **kwargs)
+
+
+def _labelframe(parent, text, bootstyle=None) -> ttk.LabelFrame:
+    """主题化分组框：ttkbootstrap 下支持 bootstyle，未安装时回退普通 ttk"""
+    if HAS_TTKB:
+        return tb.LabelFrame(parent, text=text, bootstyle=bootstyle)
+    return ttk.LabelFrame(parent, text=text)
+
+
+def _Toplevel(parent, **kwargs) -> tk.Toplevel:
+    """主题化的 Toplevel：未启用 ttkbootstrap 时回退原生"""
+    return tb.Toplevel(parent, **kwargs) if HAS_TTKB else tk.Toplevel(parent, **kwargs)
+
+
+def _Label(parent, **kwargs) -> tk.Widget:
+    """主题化的 Label（foreground 兼容原生 fg）"""
+    return tb.Label(parent, **kwargs) if HAS_TTKB else tk.Label(parent, **kwargs)
 
 
 class App:
@@ -61,7 +100,7 @@ class App:
         self._vcmd_range = (root.register(self._validate_range_input), '%P')
 
         # ---- 1. 选择文件 ----
-        file_frame = ttk.LabelFrame(root, text='1. 选择文件')
+        file_frame = _labelframe(root, '1. 选择文件', 'primary')
         file_frame.pack(fill='x', **PADDING)
         self.pdf_var = tk.StringVar()
         self.txt_var = tk.StringVar()
@@ -71,8 +110,8 @@ class App:
         self.pdf_entry = ttk.Entry(row_frame, textvariable=self.pdf_var)
         self.pdf_entry.pack(side='left', fill='x', expand=True, padx=4)
         self._register_drop(self.pdf_entry)
-        self.btn_browse_pdf = ttk.Button(
-            row_frame, text='浏览…',
+        self.btn_browse_pdf = _btn(
+            row_frame, 'secondary-outline', text='浏览…',
             command=lambda: self.browse(self.pdf_var, '选择PDF/电子书/Word文件',
                                         [('PDF/电子书/Word', '*.pdf *.epub *.mobi *.azw3 *.prc *.docx *.doc *.rtf'),
                                          ('全部', '*.*')]))
@@ -83,13 +122,13 @@ class App:
         self.txt_entry = ttk.Entry(row_frame, textvariable=self.txt_var)
         self.txt_entry.pack(side='left', fill='x', expand=True, padx=4)
         self._register_drop(self.txt_entry)
-        self.btn_browse_txt = ttk.Button(
-            row_frame, text='浏览…',
+        self.btn_browse_txt = _btn(
+            row_frame, 'secondary-outline', text='浏览…',
             command=lambda: self.browse(self.txt_var, '选择目录txt', [('文本', '*.txt'), ('全部', '*.*')]))
         self.btn_browse_txt.pack(side='left')
 
         # ---- 2. 操作 ----
-        action_frame = ttk.LabelFrame(root, text='2. 操作')
+        action_frame = _labelframe(root, '2. 操作', 'primary')
         action_frame.pack(fill='x', **PADDING)
         self.mode = tk.StringVar(value='write')
         row_frame = ttk.Frame(action_frame)
@@ -143,7 +182,7 @@ class App:
         self.image_options.pack_forget()
 
         # ---- OCR 识别目录页 ----
-        ocr_frame = ttk.LabelFrame(root, text='OCR 识别目录页')
+        ocr_frame = _labelframe(root, 'OCR 识别目录页', 'primary')
         ocr_frame.pack(fill='x', **PADDING)
         row_frame = ttk.Frame(ocr_frame)
         row_frame.pack(fill='x', **PADDING)
@@ -151,11 +190,13 @@ class App:
         self.ocr_range_var = tk.StringVar()
         ttk.Entry(row_frame, textvariable=self.ocr_range_var, width=12,
                   validate='key', validatecommand=self._vcmd_range).pack(side='left', padx=4)
-        self.btn_ocr = ttk.Button(row_frame, text='识别目录', command=self.do_ocr)
+        self.btn_ocr = _btn(row_frame, 'primary', text='识别目录', command=self.do_ocr)
         self.btn_ocr.pack(side='left', padx=8)
-        self.btn_ocr_text = ttk.Button(row_frame, text='识别文字', command=self.do_ocr_text)
+        self.btn_ocr_text = _btn(row_frame, 'primary-outline', text='识别文字',
+                                 command=self.do_ocr_text)
         self.btn_ocr_text.pack(side='left', padx=8)
-        self.btn_ai_import = ttk.Button(row_frame, text='导入AI文本', command=self.do_ai_import)
+        self.btn_ai_import = _btn(row_frame, 'info-outline', text='导入AI文本',
+                                  command=self.do_ai_import)
         self.btn_ai_import.pack(side='left', padx=8)
         self.ocr_page_mark_var = tk.BooleanVar(value=False)
         # 每页加[第N页]标记 复选框：暂注释隐藏，后续改为弹框控制
@@ -181,7 +222,7 @@ class App:
         self.ocr_offset_error_label.pack(side='left', padx=4)
 
         # ---- PDF 解锁 / 加密 ----
-        unlock_frame = ttk.LabelFrame(root, text='PDF 解锁 / 加密')
+        unlock_frame = _labelframe(root, 'PDF 解锁 / 加密', 'primary')
         unlock_frame.pack(fill='x', **PADDING)
         row_frame = ttk.Frame(unlock_frame)
         row_frame.pack(fill='x', **PADDING)
@@ -189,22 +230,25 @@ class App:
         self.password_var = tk.StringVar()
         ttk.Entry(row_frame, textvariable=self.password_var, width=20,
                   show='*').pack(side='left', padx=4)
-        self.btn_unlock = ttk.Button(row_frame, text='解锁并另存…', command=self.do_unlock)
+        self.btn_unlock = _btn(row_frame, 'primary', text='解锁并另存…',
+                               command=self.do_unlock)
         self.btn_unlock.pack(side='left', padx=8)
-        self.btn_encrypt = ttk.Button(row_frame, text='加密并另存…', command=self.do_encrypt)
+        self.btn_encrypt = _btn(row_frame, 'primary', text='加密并另存…',
+                                command=self.do_encrypt)
         self.btn_encrypt.pack(side='left', padx=8)
         self.hint(row_frame, '使用当前选择的PDF文件；解锁生成"<文件名>_已解锁.pdf"；'
                   '加密生成"<文件名>_已加密_密码<密码>.pdf"（AES-256，打开需密码，文件名自动带密码便于记忆），原文件不变',
                   wrap=430).pack(side='left', padx=8)
 
         # ---- Word 转 PDF / HTML ----
-        convert_frame = ttk.LabelFrame(root, text='Word 转 PDF / HTML')
+        convert_frame = _labelframe(root, 'Word 转 PDF / HTML', 'primary')
         convert_frame.pack(fill='x', **PADDING)
         row_frame = ttk.Frame(convert_frame)
         row_frame.pack(fill='x', **PADDING)
-        self.btn_convert = ttk.Button(row_frame, text='转为PDF…', command=self.do_doc2pdf)
+        self.btn_convert = _btn(row_frame, 'primary', text='转为PDF…', command=self.do_doc2pdf)
         self.btn_convert.pack(side='left', padx=8)
-        self.btn_convert_html = ttk.Button(row_frame, text='转为HTML…', command=self.do_doc2html)
+        self.btn_convert_html = _btn(row_frame, 'primary-outline', text='转为HTML…',
+                                     command=self.do_doc2html)
         self.btn_convert_html.pack(side='left', padx=8)
         self.hint(row_frame, '把 .docx 转为PDF/HTML（使用当前选择的文件，纯Python免安装引擎）；'
                   '.doc/.rtf 老格式转PDF需安装 Office/WPS 或 LibreOffice；原文件不变',
@@ -220,27 +264,27 @@ class App:
 
         button_frame = ttk.Frame(root)
         button_frame.pack(fill='x', **PADDING)
-        self.btn_confirm = ttk.Button(button_frame, text='写入OCR结果', width=14,
-                                      command=self.confirm_ocr_write)
+        self.btn_confirm = _btn(button_frame, 'success', text='写入OCR结果', width=14,
+                                command=self.confirm_ocr_write)
         self.btn_confirm.pack(side='left', padx=4)
-        self.btn_save_ocr = ttk.Button(button_frame, text='保存OCR结果…', width=14,
-                                       command=self.save_ocr_txt)
+        self.btn_save_ocr = _btn(button_frame, 'secondary-outline', text='保存OCR结果…',
+                                 width=14, command=self.save_ocr_txt)
         self.btn_save_ocr.pack(side='left', padx=4)
         run_button_frame = ttk.Frame(root)
         run_button_frame.pack(fill='x', **PADDING)
-        self.btn_run = ttk.Button(run_button_frame, text='执行', width=8, command=self.run)
+        self.btn_run = _btn(run_button_frame, 'primary', text='执行', width=8, command=self.run)
         self.btn_run.pack(side='right', padx=4)
-        self.btn_pause = ttk.Button(run_button_frame, text='暂停', width=6,
-                                    command=self.toggle_pause, state='disabled')
+        self.btn_pause = _btn(run_button_frame, 'warning', text='暂停', width=6,
+                              command=self.toggle_pause, state='disabled')
         self.btn_pause.pack(side='right', padx=4)
-        self.btn_stop = ttk.Button(run_button_frame, text='停止', width=6,
-                                   command=self.stop_task, state='disabled')
+        self.btn_stop = _btn(run_button_frame, 'danger', text='停止', width=6,
+                             command=self.stop_task, state='disabled')
         self.btn_stop.pack(side='right', padx=4)
-        ttk.Button(run_button_frame, text='清空日志', width=8,
-                   command=lambda: self.log.delete('1.0', 'end')).pack(side='right', padx=4)
+        _btn(run_button_frame, 'secondary-outline', text='清空日志', width=8,
+             command=lambda: self.log.delete('1.0', 'end')).pack(side='right', padx=4)
 
         # ---- 3. 预览 / 日志 ----
-        log_frame = ttk.LabelFrame(root, text='3. 预览 / 日志')
+        log_frame = _labelframe(root, '3. 预览 / 日志', 'primary')
         log_frame.pack(fill='both', expand=True, **PADDING)
         self.nb = ttk.Notebook(log_frame)
         self.nb.pack(fill='both', expand=True, padx=6, pady=6)
@@ -264,7 +308,40 @@ class App:
         ocr_scrollbar.pack(side='right', fill='y')
         self.ocr_text.pack(side='left', fill='both', expand=True)
         self.nb.add(ocr_tab, text='OCR结果（可编辑）')
+        self._build_theme_menu()
+        self._apply_theme_palette(DEFAULT_THEME)
         self._update_ocr_button_state()
+
+    def _build_theme_menu(self) -> None:
+        """顶部菜单：主题切换（ttkbootstrap 可用时）"""
+        if not HAS_TTKB:
+            return
+        self._theme_var = tk.StringVar(value=DEFAULT_THEME)
+        menu_bar = tk.Menu(self.root)
+        theme_menu = tk.Menu(menu_bar, tearoff=0)
+        for theme_name in THEME_CHOICES:
+            theme_menu.add_radiobutton(
+                label=('亮色' if theme_name == DEFAULT_THEME else '暗色'),
+                value=theme_name, variable=self._theme_var,
+                command=lambda name=theme_name: self._set_theme(name))
+        menu_bar.add_cascade(label='主题', menu=theme_menu)
+        self.root.config(menu=menu_bar)
+
+    def _set_theme(self, theme_name: str) -> None:
+        """切换亮/暗主题；同时联动日志/OCR文本等原生控件配色"""
+        if _BOOT is None:
+            return
+        _BOOT.theme_use(theme_name)
+        self._theme_var.set(theme_name)
+        self._apply_theme_palette(theme_name)
+
+    def _apply_theme_palette(self, theme_name: str) -> None:
+        """按主题设置原生控件（tk.Text等）配色，保持与主题一致"""
+        is_dark = 'dark' in theme_name
+        text_bg = '#2b2b2b' if is_dark else '#ffffff'
+        text_fg = '#e6e6e6' if is_dark else '#1a1a1a'
+        for text_widget in (self.log, self.ocr_text):
+            text_widget.configure(bg=text_bg, fg=text_fg)
 
     def hint(self, parent: ttk.Frame, text: str, wrap: int = 0) -> ttk.Label:
         """灰色小字提示"""
@@ -908,18 +985,18 @@ class App:
 
     def do_ai_import(self) -> None:
         """导入外部AI识别的目录文本：弹窗粘贴 -> 格式化 -> 另存txt"""
-        dialog = tk.Toplevel(self.root)
+        dialog = _Toplevel(self.root)
         dialog.title('导入外部AI识别的目录')
         dialog.transient(self.root)
         dialog.geometry('640x420')
-        tk.Label(dialog, text='粘贴AI识别出的目录文本（每行：标题+页码，支持印刷页码/页码范围/[p页号]，'
-                              '行首缩进表示层级），将格式化为标准格式并保存：',
-                 justify='left', anchor='w', wraplength=600).pack(fill='x', padx=10, pady=(10, 4))
+        _Label(dialog, text='粘贴AI识别出的目录文本（每行：标题+页码，支持印刷页码/页码范围/[p页号]，'
+                            '行首缩进表示层级），将格式化为标准格式并保存：',
+               justify='left', anchor='w', wraplength=600).pack(fill='x', padx=10, pady=(10, 4))
         text_widget = tk.Text(dialog, width=78, height=13)
         text_widget.pack(fill='both', expand=True, padx=10)
         status_var = tk.StringVar()
-        tk.Label(dialog, textvariable=status_var, fg='#b00020', justify='left', anchor='w',
-                 wraplength=600).pack(fill='x', padx=10, pady=2)
+        _Label(dialog, textvariable=status_var, foreground='#dc3545', justify='left',
+               anchor='w', wraplength=600).pack(fill='x', padx=10, pady=2)
 
         def on_format() -> None:
             raw = text_widget.get('1.0', 'end').strip()
@@ -949,8 +1026,9 @@ class App:
 
         button_row = ttk.Frame(dialog)
         button_row.pack(fill='x', padx=10, pady=10)
-        ttk.Button(button_row, text='格式化并保存…', command=on_format).pack(side='left')
-        ttk.Button(button_row, text='取消', command=dialog.destroy).pack(side='left', padx=8)
+        _btn(button_row, 'primary', text='格式化并保存…', command=on_format).pack(side='left')
+        _btn(button_row, 'secondary-outline', text='取消',
+             command=dialog.destroy).pack(side='left', padx=8)
         dialog.wait_window()
 
     def _prepare_write_from_text(self, text_to_parse: str) -> Optional[str]:
@@ -1036,8 +1114,11 @@ class App:
 
 
 def main() -> int:
+    global _BOOT
     # 优先使用支持文件拖放的根窗口；未安装 tkinterdnd2 时降级普通窗口
     root = TkinterDnD.Tk() if HAS_DND else tk.Tk()
+    if HAS_TTKB:
+        _BOOT = tb.Style(theme=DEFAULT_THEME)
     App(root)
     root.mainloop()
     return 0
