@@ -652,10 +652,18 @@ class App:
                 text='主题: 暗色' if is_dark else '主题: 亮色')
         self.ocr_offset_error_label.configure(
             fg='#ff6b6b' if is_dark else '#b00020')
+        hint_fg = '#9aa0a6' if is_dark else '#6c757d'
+        for hint_label in getattr(self, '_hint_labels', ()):
+            hint_label.configure(foreground=hint_fg)
 
     def hint(self, parent: ttk.Frame, text: str, wrap: int = 0) -> ttk.Label:
-        """灰色小字提示"""
-        hint_label = ttk.Label(parent, text=text, foreground='gray')
+        """灰色小字提示（前景色随主题：暗色亮灰/亮色深灰）"""
+        if not hasattr(self, '_hint_labels'):
+            self._hint_labels = []
+        hint_label = ttk.Label(
+            parent, text=text,
+            foreground='#9aa0a6' if 'dark' in CURRENT_THEME else '#6c757d')
+        self._hint_labels.append(hint_label)
         if wrap:
             hint_label.configure(wraplength=wrap, justify='left')
         return hint_label
@@ -1308,7 +1316,8 @@ class App:
         text_widget = tk.Text(dialog, width=78, height=13)
         text_widget.pack(fill='both', expand=True, padx=10)
         status_var = tk.StringVar()
-        _Label(dialog, textvariable=status_var, foreground='#dc3545', justify='left',
+        _Label(dialog, textvariable=status_var,
+               foreground='#ff6b6b' if 'dark' in CURRENT_THEME else '#dc3545', justify='left',
                anchor='w', wraplength=600).pack(fill='x', padx=10, pady=2)
 
         def on_format() -> None:
