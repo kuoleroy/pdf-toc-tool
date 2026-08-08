@@ -274,16 +274,6 @@ class App:
                                         [('PDF/电子书/Word', '*.pdf *.epub *.mobi *.azw3 *.prc *.docx *.doc *.rtf'),
                                          ('全部', '*.*')]))
         self.btn_browse_pdf.pack(side='left')
-        row_frame = ttk.Frame(file_frame)
-        row_frame.pack(fill='x', **PADDING)
-        ttk.Label(row_frame, text='目录txt:').pack(side='left')
-        self.txt_entry = ttk.Entry(row_frame, textvariable=self.txt_var)
-        self.txt_entry.pack(side='left', fill='x', expand=True, padx=4)
-        self._register_drop(self.txt_entry)
-        self.btn_browse_txt = _btn(
-            row_frame, 'secondary-outline', text='浏览…',
-            command=lambda: self.browse(self.txt_var, '选择目录txt', [('文本', '*.txt'), ('全部', '*.*')]))
-        self.btn_browse_txt.pack(side='left')
 
         # 参数区（随导航切换）
         self._config_host = ttk.Frame(right)
@@ -331,6 +321,18 @@ class App:
     def _page_write(self) -> ttk.Frame:
         """任务1：写入书签（txt → PDF）"""
         page = ttk.Frame(self._config_host)
+        # 目录txt仅写入书签任务需要，放在本任务页内
+        txt_frame = _labelframe(page, '目录txt', 'primary')
+        txt_frame.pack(fill='x', **PADDING)
+        row_frame = ttk.Frame(txt_frame)
+        row_frame.pack(fill='x', **PADDING)
+        self.txt_entry = ttk.Entry(row_frame, textvariable=self.txt_var)
+        self.txt_entry.pack(side='left', fill='x', expand=True, padx=4)
+        self._register_drop(self.txt_entry)
+        self.btn_browse_txt = _btn(
+            row_frame, 'secondary-outline', text='浏览…',
+            command=lambda: self.browse(self.txt_var, '选择目录txt', [('文本', '*.txt'), ('全部', '*.*')]))
+        self.btn_browse_txt.pack(side='left')
         action_frame = _labelframe(page, '写入书签（txt → PDF）', 'primary')
         action_frame.pack(fill='x', **PADDING)
         self.mode = tk.StringVar(value='write')
