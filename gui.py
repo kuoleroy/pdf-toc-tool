@@ -67,6 +67,37 @@ OCR_PREVIEW_FILE_NAME = '_pdf_toc_ocr_preview.txt'  # 确认写入时的临时�
 
 # 全局主题样式实例（ttkbootstrap 下启用）
 _BOOT = None
+CURRENT_THEME = DEFAULT_THEME  # 当前主题名（暗色 outline 按钮样式切换用）
+
+# 暗色主题下 outline 系列按钮自绘样式（ttkbootstrap 的 outline 为图片渲染，暗色下文字不可见，
+# 无法用 style map 修复，改为：亮色文字 + 细边框 + hover 实心反馈）
+OUTLINE_DARK_STYLES = {
+    'secondary-outline': ('#c7cdd4', '#8a909a', '#6c757d'),  # fg, 边框, hover背景
+    'primary-outline': ('#8ab4f8', '#5d8fd6', '#0d6efd'),
+    'info-outline': ('#6edff6', '#4fa8bd', '#0dcaf0'),
+}
+OUTLINE_STYLE_TO_BOOT = {'darkoutline.%s' % boot.split('-')[0]: boot
+                         for boot in OUTLINE_DARK_STYLES}
+
+
+def _outline_dark_style(bootstyle: str) -> str:
+    """注册并返回暗色 outline 按钮的自定义样式名；非 outline/亮色主题返回空"""
+    if _BOOT is None or 'dark' not in CURRENT_THEME or bootstyle not in OUTLINE_DARK_STYLES:
+        return ''
+    fg, border, hover_bg = OUTLINE_DARK_STYLES[bootstyle]
+    style_name = 'darkoutline.%s' % bootstyle.split('-')[0]
+    try:
+        _BOOT.configure(style_name, background='#2a2b2d', foreground=fg,
+                        bordercolor=border, lightcolor=border, darkcolor=border,
+                        borderwidth=1, relief='solid', padding=(12, 5))
+        # layout 须用 layout() 方法设置（configure 的 layout 参数不会被格式化，tcl 层会静默丢弃）
+        _BOOT.layout(style_name, _BOOT.layout('TButton') or [])
+        _BOOT.map(style_name,
+                  background=[('disabled', '#222326'), ('active', hover_bg)],
+                  foreground=[('disabled', '#8a909a'), ('active', '#ffffff')])
+    except tk.TclError:
+        pass
+    return style_name
 
 # ---- 字体（仿 opencode 质感：中文字体 + 整体放大） ----
 FONT_NAME = 'LXGW WenKai'      # 首选字体（已安装时 Tk 内注册名是"霞鹜文楷"）
@@ -101,8 +132,15 @@ def _apply_global_font(root: tk.Misc) -> None:
 
 
 def _btn(parent, bootstyle=None, **kwargs) -> ttk.Button:
-    """主题化按钮：ttkbootstrap 下支持 bootstyle，未安装时回退普通 ttk"""
+    """主题化按钮：ttkbootstrap 下支持 bootstyle，未安装时回退普通 ttk；
+    暗色主题下 outline 系列改用自绘亮色样式（见 _outline_dark_style）"""
     if HAS_TTKB:
+        dark_outline_style = _outline_dark_style(bootstyle or '')
+        if dark_outline_style:
+            # 用原生 ttk.Button：tb.Button 会把 style 名再过一遍 bootstyle 解析（自定义名会丢失）
+            kwargs['style'] = dark_outline_style
+            kwargs.pop('bootstyle', None)
+            return ttk.Button(parent, **kwargs)
         return tb.Button(parent, bootstyle=bootstyle, **kwargs)
     kwargs.pop('bootstyle', None)
     return ttk.Button(parent, **kwargs)
@@ -383,7 +421,8 @@ class App:
                   validate='key', validatecommand=self._vcmd_digits).pack(side='left', padx=4)
         self.hint(offset_row, '目录后第一个正文页，识别目录/写书签共用，必填，自动算偏移',
                   wrap=430).pack(side='left', padx=8)
-        self.ocr_offset_error_label = tk.Label(offset_row, text='', fg='#b00020')
+        self.ocr_offset_error_label = tk.Label(offset_row, text='',
+                                               fg='#ff6b6b' if 'dark' in CURRENT_THEME else '#b00020')
         self.ocr_offset_error_label.pack(side='left', padx=4)
         self.hint(page, '识别中可点底部[暂停]/[停止]；[识别目录]需先填"正文第一页"两框；'
                         '结果自动带[pN]页号，可在"OCR结果"页签编辑（Ctrl+Z/Ctrl+S）',
@@ -548,12 +587,37 @@ class App:
 
     def _set_theme(self, theme_name: str) -> None:
         """切换亮/暗主题；同时联动日志/OCR文本等原生控件配色与状态栏按钮"""
+        global CURRENT_THEME
         if _BOOT is None:
             return
         _BOOT.theme_use(theme_name)
+        CURRENT_THEME = theme_name
         self._theme_var.set(theme_name)
         self._apply_theme_palette(theme_name)
         self._apply_button_disabled_style()  # theme_use 会重建主题样式，需重应用
+        self._refresh_outline_buttons()      # outline 按钮在暗色下需换自绘亮色样式
+
+    def _refresh_outline_buttons(self) -> None:
+        """主题切换后重设已创建的 outline 按钮样式（暗色→亮色样式，亮色→恢复原样）"""
+        if _BOOT is None:
+            return
+        self._walk_refresh_outline(self.root)
+
+    def _walk_refresh_outline(self, widget: tk.Widget) -> None:
+        for child in widget.winfo_children():
+            if child.winfo_class() == 'TButton':
+                current_style = str(child.cget('style'))
+                boot = OUTLINE_STYLE_TO_BOOT.get(current_style)
+                if boot is None:
+                    # 亮色主题下的形态为 '<boot>.TButton'
+                    for outline_boot in OUTLINE_DARK_STYLES:
+                        if current_style == '%s.TButton' % outline_boot:
+                            boot = outline_boot
+                            break
+                if boot:
+                    new_style = _outline_dark_style(boot)
+                    child.configure(style=new_style if new_style else '%s.TButton' % boot)
+            self._walk_refresh_outline(child)
 
     def _apply_theme_palette(self, theme_name: str) -> None:
         """按主题设置原生控件配色：日志/OCR文本、状态栏与导航（外边框区）随主题联动"""
@@ -584,6 +648,8 @@ class App:
             self._sb_theme_btn.configure(
                 bootstyle=theme_boot,
                 text='主题: 暗色' if is_dark else '主题: 亮色')
+        self.ocr_offset_error_label.configure(
+            fg='#ff6b6b' if is_dark else '#b00020')
 
     def hint(self, parent: ttk.Frame, text: str, wrap: int = 0) -> ttk.Label:
         """灰色小字提示"""

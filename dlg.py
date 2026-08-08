@@ -27,6 +27,23 @@ def _digits_only(text: str) -> bool:
     return bool(re.fullmatch(r'\d*', text))
 
 
+def _is_dark_theme() -> bool:
+    """弹窗运行时的主题是否为暗色（从 gui 读当前主题；gui 不可用时按默认暗色）"""
+    try:
+        from gui import CURRENT_THEME
+        return 'dark' in CURRENT_THEME
+    except Exception:
+        return True
+
+
+def _error_fg() -> str:
+    return '#ff6b6b' if _is_dark_theme() else '#dc3545'
+
+
+def _hint_fg() -> str:
+    return '#9aa0a6' if _is_dark_theme() else '#8a8f98'
+
+
 def _range_input(text: str) -> bool:
     return bool(re.fullmatch(r'\d*[—–\-]?\d*', text))
 
@@ -72,9 +89,9 @@ def ask_ocr_args(parent: tk.Tk, pdf_path_var: tk.StringVar,
     _Entry(range_row, textvariable=range_input_var, width=12,
            validate='key', validatecommand=range_cmd).pack(side='left', padx=4)
     _Label(range_row, text='如 11-16（目录页在PDF中的页号）',
-           foreground='#8a8f98').pack(side='left')
+           foreground=_hint_fg()).pack(side='left')
 
-    error_label = _Label(dialog, text='', foreground='#dc3545')
+    error_label = _Label(dialog, text='', foreground=_error_fg())
     error_label.pack(padx=12, anchor='w')
 
     PAGE_RANGE_PATTERN = re.compile(r'^\s*\d+\s*[-—–]\s*\d+\s*$')
