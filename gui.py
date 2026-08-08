@@ -130,8 +130,11 @@ class App:
         self.root = root
         _apply_global_font(root)  # 独立实例化（如测试）时也保证字体生效
         root.title('PDF 书签工具 v%s' % VERSION)
-        root.geometry('980x820')
-        root.minsize(880, 620)
+        root.geometry('980x860')
+        root.minsize(880, 660)
+        # grid 布局：行1为主内容区(weight=1)，底部固定行不会被挤压
+        root.grid_rowconfigure(1, weight=1)
+        root.grid_columnconfigure(0, weight=1)
 
         self._tm = taskmgr.TaskManager()
         self._task = None
@@ -153,39 +156,56 @@ class App:
 
         self._build_theme_menu()
         self._apply_theme_palette(DEFAULT_THEME)
+        self._apply_button_disabled_style()
         self._go_page(1)
         self._update_ocr_button_state()
+
+    def _apply_button_disabled_style(self) -> None:
+        """禁用态按钮提亮文字：暗色主题下默认 disabled 文字几乎不可见；
+        须在全部按钮创建后执行（ttkbootstrap 按钮构造时会重建 bootstyle 样式覆盖 map）"""
+        if _BOOT is None:
+            return
+        for boot in ('primary', 'secondary', 'secondary-outline', 'success',
+                     'warning', 'danger', 'info-outline'):
+            _BOOT.map('%s.TButton' % boot, foreground=[('disabled', '#8a909a')])
 
     # ---- 布局 ----
 
     def _build_statusbar(self) -> None:
-        """顶部状态栏：程序名 | 当前任务 | 当前文件 | 主题切换（固定深色，仿 opencode）"""
+        """顶部状态栏：程序名 | 当前任务 | 当前文件 | 主题切换（配色随主题联动）"""
         status_bar = tk.Frame(self.root, bg=SB_BG)
-        status_bar.pack(fill='x')
-        tk.Label(status_bar, text='◆ PDF书签工具', bg=SB_BG, fg='#e8e8e8',
-                 font=(FONT[0], TITLE_FONT_SIZE, 'bold')).pack(side='left', padx=(10, 4), pady=6)
-        tk.Label(status_bar, text='v%s' % VERSION, bg=SB_BG, fg=SB_FG_DIM,
-                 font=FONT).pack(side='left', pady=6)
+        status_bar.grid(row=0, column=0, sticky='ew')
+        status_bar.grid_columnconfigure(3, weight=1)
+        self._sb_bar = status_bar
+        self._sb_title = tk.Label(status_bar, text='◆ PDF书签工具', bg=SB_BG, fg='#e8e8e8',
+                                  font=(FONT[0], TITLE_FONT_SIZE, 'bold'))
+        self._sb_title.grid(row=0, column=0, padx=(10, 4), pady=6)
+        self._sb_ver = tk.Label(status_bar, text='v%s' % VERSION, bg=SB_BG, fg=SB_FG_DIM,
+                                font=FONT)
+        self._sb_ver.grid(row=0, column=1, pady=6)
         self._sb_task_var = tk.StringVar()
-        tk.Label(status_bar, textvariable=self._sb_task_var, bg=SB_BG, fg=SB_FG_ACCENT,
-                 font=FONT).pack(side='left', padx=18, pady=6)
+        self._sb_task_label = tk.Label(status_bar, textvariable=self._sb_task_var, bg=SB_BG,
+                                       fg=SB_FG_ACCENT, font=FONT)
+        self._sb_task_label.grid(row=0, column=2, padx=18, pady=6)
         self._sb_file_var = tk.StringVar(value='未选择文件')
-        tk.Label(status_bar, textvariable=self._sb_file_var, bg=SB_BG, fg=SB_FG,
-                 font=FONT).pack(side='left', fill='x', expand=True, pady=6)
+        self._sb_file_label = tk.Label(status_bar, textvariable=self._sb_file_var, bg=SB_BG,
+                                       fg=SB_FG, font=FONT)
+        self._sb_file_label.grid(row=0, column=3, sticky='w', pady=6)
         self._sb_theme_btn = _btn(status_bar, 'dark', text='主题: 暗色', padding=(10, 3),
                                   command=self._toggle_theme)
-        self._sb_theme_btn.pack(side='right', padx=10, pady=4)
+        self._sb_theme_btn.grid(row=0, column=4, padx=10, pady=4)
 
     def _build_nav_and_content(self) -> None:
         main = ttk.Frame(self.root)
-        main.pack(fill='both', expand=True, **PADDING)
+        main.grid(row=1, column=0, sticky='nsew', padx=8, pady=4)
 
         # ---- 左侧任务导航 ----
         nav_frame = ttk.Frame(main, width=170)
         nav_frame.pack(side='left', fill='y')
         nav_frame.pack_propagate(False)
-        tk.Label(nav_frame, text='任 务', bg=NAV_BG, fg=SB_FG_DIM,
-                 font=FONT).pack(fill='x', pady=(8, 2))
+        self._nav_title = tk.Label(nav_frame, text='任 务', bg=NAV_BG, fg=SB_FG_DIM,
+                                   font=FONT)
+        self._nav_title.pack(fill='x', pady=(8, 2))
         self.nav = tk.Listbox(nav_frame, bg=NAV_BG, fg=NAV_FG,
                               selectbackground=NAV_SEL_BG, selectforeground='#ffffff',
                               activestyle='none', bd=0, relief='flat',
@@ -420,16 +440,16 @@ class App:
     # ---- 底部操作区 ----
 
     def _build_bottom(self) -> None:
-        # 进度条与按钮行放在日志区之前，窗口缩小时不遮挡操作按钮
+        # 进度条与按钮行放在日志区下方，grid 固定行不会因主区拉伸被挤压
         progress_frame = ttk.Frame(self.root)
-        progress_frame.pack(fill='x', **PADDING)
+        progress_frame.grid(row=2, column=0, sticky='ew', padx=8, pady=(4, 2))
         self.prog_label = ttk.Label(progress_frame, text='', anchor='w')
         self.prog_label.pack(side='left')
         self.prog = ttk.Progressbar(progress_frame, mode='determinate', maximum=100)
         self.prog.pack(side='left', fill='x', expand=True)
 
         button_frame = ttk.Frame(self.root)
-        button_frame.pack(fill='x', **PADDING)
+        button_frame.grid(row=3, column=0, sticky='ew', padx=8, pady=4)
         _btn(button_frame, 'secondary-outline', text='清空日志', width=8,
              command=lambda: self.log.delete('1.0', 'end')).pack(side='left', padx=4)
         self.btn_run = _btn(button_frame, 'primary', text='执行', width=8, command=self.run)
@@ -444,7 +464,7 @@ class App:
         # 底部快捷键提示条（仿 opencode 底部状态栏）
         self.hint(self.root, '[1-5] 切换任务    [Enter] 执行    [Ctrl+T] 切换主题    '
                              '[Tab] 切换焦点    文件可直接拖入输入框',
-                  wrap=0).pack(anchor='w', **PADDING)
+                  wrap=0).grid(row=4, column=0, sticky='ew', padx=10, pady=(0, 4))
 
     # ---- 导航切换与键盘 ----
 
@@ -532,17 +552,38 @@ class App:
             return
         _BOOT.theme_use(theme_name)
         self._theme_var.set(theme_name)
-        self._sb_theme_btn.configure(
-            text='主题: 暗色' if 'dark' in theme_name else '主题: 亮色')
         self._apply_theme_palette(theme_name)
+        self._apply_button_disabled_style()  # theme_use 会重建主题样式，需重应用
 
     def _apply_theme_palette(self, theme_name: str) -> None:
-        """按主题设置原生控件（tk.Text等）配色，保持与主题一致"""
+        """按主题设置原生控件配色：日志/OCR文本、状态栏与导航（外边框区）随主题联动"""
         is_dark = 'dark' in theme_name
         text_bg = '#2b2b2b' if is_dark else '#ffffff'
         text_fg = '#e6e6e6' if is_dark else '#1a1a1a'
         for text_widget in (self.log, self.ocr_text):
             text_widget.configure(bg=text_bg, fg=text_fg)
+        if is_dark:
+            bar_bg, title_fg, dim_fg, accent_fg, fg = \
+                '#1e1f24', '#e8e8e8', '#8a8f98', '#7fb3d5', '#d5d5d8'
+            nav_bg, nav_fg, nav_sel_bg, nav_sel_fg = '#1e1f24', '#c9cbd1', '#2f3542', '#ffffff'
+            theme_boot = 'dark'
+        else:
+            bar_bg, title_fg, dim_fg, accent_fg, fg = \
+                '#e9ecef', '#212529', '#6c757d', '#0d6efd', '#343a40'
+            nav_bg, nav_fg, nav_sel_bg, nav_sel_fg = '#f1f3f5', '#343a40', '#d0d7de', '#111111'
+            theme_boot = 'light'
+        self._sb_bar.configure(bg=bar_bg)
+        self._sb_title.configure(bg=bar_bg, fg=title_fg)
+        self._sb_ver.configure(bg=bar_bg, fg=dim_fg)
+        self._sb_task_label.configure(bg=bar_bg, fg=accent_fg)
+        self._sb_file_label.configure(bg=bar_bg, fg=fg)
+        self._nav_title.configure(bg=nav_bg, fg=dim_fg)
+        self.nav.configure(bg=nav_bg, fg=nav_fg, selectbackground=nav_sel_bg,
+                           selectforeground=nav_sel_fg)
+        if HAS_TTKB:
+            self._sb_theme_btn.configure(
+                bootstyle=theme_boot,
+                text='主题: 暗色' if is_dark else '主题: 亮色')
 
     def hint(self, parent: ttk.Frame, text: str, wrap: int = 0) -> ttk.Label:
         """灰色小字提示"""
