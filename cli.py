@@ -1,5 +1,20 @@
 # -*- coding: utf-8 -*-
-"""命令行接口"""
+"""命令行入口：解析用户参数，把各子命令分发到 core / ocr / ebook / doc2pdf 模块。
+
+子命令与依赖模块对照：
+- extract    提取PDF书签        -> core.read_toc + core.export_toc_txt
+- write      写入书签           -> core.parse_toc + core.levels_from_indent
+                                 + core.build_toc + core.write_toc
+- ocr        页面OCR            -> ocr.load_ocr / ocr.ocr_to_txt / ocr.extract_text / ocr.detect_offset
+- ebook      提取电子书目录     -> ebook.extract_toc + ebook.to_txt
+- pdfimages  提取图片           -> core.extract_images
+- unlock     去除PDF密码        -> core.unlock_pdf
+- encrypt    设置PDF密码        -> core.encrypt_pdf
+- doc2pdf     Word转PDF         -> doc2pdf.doc_to_pdf
+- doc2html    .docx转HTML       -> doc2pdf.doc_to_html
+
+约定：本模块只做参数解析与结果打印，所有实际处理逻辑都在被调用的模块中。
+"""
 import os
 import re
 import sys
@@ -10,6 +25,7 @@ import doc2pdf
 import ebook
 import ocr
 
+# 页号范围参数："12-34"，兼容全角连接号"-/–/—"
 RE_PAGE_RANGE = re.compile(r'^(\d+)[-—–](\d+)$')
 
 DEFAULT_OFFSET = 15
@@ -20,6 +36,7 @@ DEFAULT_BOOK_TXT_SUFFIX = '_目录.txt'
 
 
 def _print_usage() -> None:
+    """打印全部子命令的用法说明（参数缺失或非法时也会调用）"""
     print('用法:')
     print('  %s extract <pdf> [输出txt]' % os.path.basename(sys.argv[0]))
     print('  %s write <pdf> <目录txt> [偏移(默认15)] [copy|same]' % os.path.basename(sys.argv[0]))
@@ -49,7 +66,12 @@ def _write_text_file(output_path: str, content: str) -> None:
 
 
 def main(args: List[str]) -> int:
-    """CLI 分发：extract / write / ocr / ebook / pdfimages"""
+    """CLI 分发入口：按 args[0] 的子命令名路由，返回进程退出码（0=成功，1=失败/用法错误）。
+
+    固定参数按位置读取，可选参数（-o/-a/-t、-r/-f/-q 等）用 while 循环逐个扫描；
+    参数校验失败一律 _print_usage() 后返回 1。实际处理全部委托给 core/ocr/ebook/doc2pdf，
+    这里仅把命令行参数转换为对应模块的调用。
+    """
     if not args:
         _print_usage()
         return 1
@@ -57,9 +79,10 @@ def main(args: List[str]) -> int:
 
     if command == 'extract' and len(args) >= 2:
         pdf_path = args[1]
+        # 输出txt默认 "<书名>_书签.txt"
         output_path = args[2] if len(args) > 2 \
             else os.path.splitext(pdf_path)[0] + DEFAULT_EXTRACT_SUFFIX
-        toc_entries = core.read_toc(pdf_path)
+        toc_entries = core.read_toc(pdf_path)  # 提取书签 -> [[level, title, pdf_page]]
         if not toc_entries:
             print('该PDF没有书签。')
             return 1
@@ -75,6 +98,7 @@ def main(args: List[str]) -> int:
             print('偏移必须是整数: %s' % args[3])
             return 1
         output_mode = args[4] if len(args) > 4 else 'copy'
+        # 写入流水线：目录txt -> 解析(含续行/[pN]/提示行) -> 缩进转层级 -> 页码偏移换算 -> 写入PDF
         parsed_entries = core.levels_from_indent(core.parse_toc(toc_txt_path))
         toc_entries = core.build_toc(parsed_entries, offset)
         output_path = core.write_toc(pdf_path, toc_entries, output_mode)
@@ -83,7 +107,7 @@ def main(args: List[str]) -> int:
 
     if command == 'ocr' and len(args) >= 3:
         pdf_path = args[1]
-        range_match = RE_PAGE_RANGE.match(args[2])
+        range_match = RE_PAGE_RANGE.match(args[2])  # 校验"起始-结束"页号格式
         if not range_match:
             _print_usage()
             return 1
@@ -92,6 +116,7 @@ def main(args: List[str]) -> int:
         detect_offset_flag = False
         text_mode_flag = False
         arg_index = 3
+        # 可选参数扫描：-o 输出txt；-a 自动检测偏移并打印；-t 纯文字识别模式
         while arg_index < len(args):
             if args[arg_index] == '-o' and arg_index + 1 < len(args):
                 output_path = args[arg_index + 1]
@@ -133,9 +158,10 @@ def main(args: List[str]) -> int:
 
     if command == 'ebook' and len(args) >= 2:
         book_path = args[1]
+        # 输出txt默认 "<书名>_目录.txt"
         output_path = args[2] if len(args) > 2 \
             else os.path.splitext(book_path)[0] + DEFAULT_BOOK_TXT_SUFFIX
-        toc_entries = ebook.extract_toc(book_path)
+        toc_entries = ebook.extract_toc(book_path)  # [p序号]为阅读顺序号，非实际页码
         toc_text = ebook.to_txt(toc_entries)
         _write_text_file(output_path, toc_text)
         print('提取 %d 条目录（[p序号]为阅读顺序号，非页码） -> %s' % (len(toc_entries), output_path))
@@ -148,6 +174,8 @@ def main(args: List[str]) -> int:
         image_format = DEFAULT_IMAGE_FORMAT
         jpeg_quality = DEFAULT_JPEG_QUALITY
         arg_index = 2
+        # 可选参数扫描：-r 渲染dpi、-f 格式(orig/png/jpeg)、-q JPEG质量；
+        # 第一个裸参数（非选项）视为输出目录
         while arg_index < len(args):
             if args[arg_index] == '-r' and arg_index + 1 < len(args):
                 try:
@@ -183,6 +211,7 @@ def main(args: List[str]) -> int:
 
     if command == 'unlock' and len(args) >= 3:
         pdf_path, password = args[1], args[2]
+        # 默认输出 "<原名>_已解锁.pdf"
         output_path = args[3] if len(args) > 3 \
             else os.path.splitext(pdf_path)[0] + '_已解锁.pdf'
         core.unlock_pdf(pdf_path, password, output_path)
@@ -191,6 +220,7 @@ def main(args: List[str]) -> int:
 
     if command == 'encrypt' and len(args) >= 3:
         pdf_path, password = args[1], args[2]
+        # 默认输出 "<原名>_已加密_密码<密码>.pdf"：文件名带密码便于记忆
         output_path = args[3] if len(args) > 3 \
             else os.path.splitext(pdf_path)[0] + '_已加密_密码' + password + '.pdf'
         core.encrypt_pdf(pdf_path, password, output_path)
@@ -199,6 +229,7 @@ def main(args: List[str]) -> int:
 
     if command == 'doc2pdf' and len(args) >= 2:
         source_path = args[1]
+        # 默认输出 "<原名>_转PDF.pdf"
         output_path = args[2] if len(args) > 2 \
             else os.path.splitext(source_path)[0] + '_转PDF.pdf'
         doc2pdf.doc_to_pdf(source_path, output_path)
@@ -207,11 +238,12 @@ def main(args: List[str]) -> int:
 
     if command == 'doc2html' and len(args) >= 2:
         source_path = args[1]
+        # 默认输出 "<原名>_转HTML.html"
         output_path = args[2] if len(args) > 2 \
             else os.path.splitext(source_path)[0] + '_转HTML.html'
         doc2pdf.doc_to_html(source_path, output_path)
         print('转换完成（Word → HTML） -> %s' % output_path)
         return 0
 
-    _print_usage()
+    _print_usage()  # 未知子命令或参数数量不足，打印用法并失败退出
     return 1

@@ -51,6 +51,7 @@ def extract_toc(path: str) -> List[Tuple[int, str, int]]:
     file_extension = os.path.splitext(path)[1].lower()
     if not os.path.isfile(path):
         raise ValueError('文件不存在: %s' % path)
+    # 按扩展名分发：EPUB 走 zip 容器解析，MOBI 系（含 AZW3/PRC/AZW）走 PDB/INDX 二进制解析
     if file_extension == '.epub':
         return _epub_toc(path)
     if file_extension in ('.mobi', '.azw3', '.prc', '.azw'):
@@ -64,6 +65,7 @@ def to_txt(toc_entries: List[Tuple[int, str, int]],
     """目录条目 -> txt 文本（缩进 + 标题；with_sequence 时行尾带 [p序号]）"""
     output_lines = []
     for indent, title, sequence_number in toc_entries:
+        # 行尾 [p序号] 与 PDF 书签 txt 格式一致：序号为该条目在书中的阅读顺序号
         suffix = ' [p%d]' % sequence_number if with_sequence else ''
         output_lines.append('  ' * indent + title + suffix)
     return '\n'.join(output_lines) + '\n'
@@ -84,6 +86,7 @@ def _epub_toc(path: str) -> List[Tuple[int, str, int]]:
     """EPUB 目录：优先 nav 文档，其次 NCX"""
     with zipfile.ZipFile(path) as archive:
         try:
+            # EPUB 本质是 zip 包：META-INF/container.xml 描述容器根，指向真正的 OPF 元数据文件
             container_xml = archive.read('META-INF/container.xml')
         except KeyError:
             raise ValueError('不是有效的EPUB文件（缺少 META-INF/container.xml）')
@@ -92,6 +95,7 @@ def _epub_toc(path: str) -> List[Tuple[int, str, int]]:
         if rootfile is None:
             raise ValueError('EPUB容器中未找到 rootfile')
         opf_path = rootfile.get('full-path') or ''
+        # 记录 OPF 所在目录，用于把 manifest 中的相对 href 拼成包内完整路径
         opf_directory = os.path.dirname(opf_path).replace('\\', '/')
         opf_root = ET.fromstring(archive.read(opf_path))
 
@@ -102,17 +106,21 @@ def _epub_toc(path: str) -> List[Tuple[int, str, int]]:
             item_id = manifest_item.get('id')
             href = manifest_item.get('href')
             manifest_paths[item_id] = href
+            # EPUB3 的导航文档在 manifest 中以 properties="nav" 标记
             properties = (manifest_item.get('properties') or '').split()
             if 'nav' in properties:
                 nav_path = href
+        # EPUB2 的目录为 NCX 文件：spine 的 toc 属性给出其 manifest id
         spine = opf_root.find('.//{%s}spine' % _OPF_NS)
         if spine is not None:
             ncx_identifier = spine.get('toc')
         ncx_path = manifest_paths.get(ncx_identifier) if ncx_identifier else None
+        # 兜底：部分电子书未在 spine 声明 toc，按 NCX 专用 media-type 再找一次
         for manifest_item in opf_root.findall('.//{%s}item' % _OPF_NS):
             if manifest_item.get('media-type') == 'application/x-dtbncx+xml':
                 ncx_path = manifest_item.get('href')
 
+        # 目录来源优先级：EPUB3 nav > EPUB2 NCX
         toc_path = nav_path or ncx_path
         if not toc_path:
             raise ValueError('EPUB中未找到目录文件（nav/ncx）')
@@ -127,6 +135,7 @@ def _parse_nav_html(file_bytes: bytes) -> List[Tuple[int, str, int]]:
     """解析 EPUB3 nav 文档：取 type=toc 的 nav，按 <ol>/<li> 层级递归"""
     root = ET.fromstring(file_bytes)
     toc_navigation = None
+    # 标准要求 type="toc" 的 nav 才是目录；个别电子书未标注，则退而取第一个 nav
     for nav_element in root.iter('{%s}nav' % _XHTML_NS):
         if nav_element.get('{%s}type' % _OPS_NS) == 'toc':
             toc_navigation = nav_element
@@ -137,11 +146,13 @@ def _parse_nav_html(file_bytes: bytes) -> List[Tuple[int, str, int]]:
             toc_navigation = all_navigations[0]
     if toc_navigation is None:
         raise ValueError('未找到目录（nav）')
+    # 可变容器用于在递归中共享计数：遍历顺序即阅读顺序，[p序号] 按此递增
     sequence_counter = [0]
     toc_entries: List[Tuple[int, str, int]] = []
 
     def walk_list(list_element: ET.Element, depth: int) -> None:
         for list_item in list_element.findall('{%s}li' % _XHTML_NS):
+            # <a> 取标题并计数；嵌套 <ol> 递归下降一层，depth 即缩进层级
             anchor_element = list_item.find('{%s}a' % _XHTML_NS)
             if anchor_element is not None:
                 sequence_counter[0] += 1
@@ -167,6 +178,7 @@ def _be32(file_bytes: bytes, offset: int) -> int:
 
 def _vwi(file_bytes: bytes, offset: int) -> Tuple[int, int]:
     """MOBI variable-width int：最高位为结束标记 -> (consumed_bytes, value)"""
+    # 变长整数：每字节低 7 位为数据，最高位为 0 表示还有后续字节
     accumulated = 0
     consumed_bytes = 0
     while True:
@@ -175,6 +187,7 @@ def _vwi(file_bytes: bytes, offset: int) -> Tuple[int, int]:
         if byte_value & 0x80:
             break
         accumulated = (accumulated << 7) | byte_value
+    # 末字节最高位为 1（结束标记），仅取低 7 位拼接
     accumulated = (accumulated << 7) | (byte_value & 0x7F)
     return consumed_bytes, accumulated
 
@@ -187,6 +200,7 @@ def _read_tag_table(file_bytes: bytes, section_offset: int
     """
     if file_bytes[section_offset:section_offset + 4] != TAGX_MAGIC:
         return 0, []
+    # TAGX 段布局：魔数(4) + 首条 tag 定义偏移(4) + 控制字节数(4)，其后每条 4 字节定义 tag 字段
     first_entry_offset = _be32(file_bytes, section_offset + 4)
     control_byte_count = _be32(file_bytes, section_offset + 8)
     tag_definitions: List[Tuple[int, int, int, int]] = []
@@ -203,6 +217,7 @@ def _get_tag_map(control_byte_count: int,
     """解析单个索引条目的 tag -> {tag: [values]}（values 为 VWI 解码后的数）"""
     tag_values_map: Dict[Tuple[int, int, int, int], List[int]] = {}
     control_index = 0
+    # 每条目的前 control_byte_count 字节是控制字节：按位掩码描述各 tag 的字段值
     data_cursor = entry_start + control_byte_count
     for tag, values_per_entry, mask, end_flag in tag_table:
         if end_flag == 0x01:
@@ -252,6 +267,7 @@ def _parse_mobi_toc(path: str) -> List[Tuple[int, str, int]]:
         file_bytes = mobi_file.read()
     if len(file_bytes) < MOBI_PDB_HEADER_LENGTH:
         raise ValueError('不是有效的MOBI/PDB文件')
+    # PDB 头：偏移 76 处为大端 2 字节记录数；其后每记录 8 字节（4 字节偏移 + 4 字节属性）
     record_count = struct.unpack('>H', file_bytes[MOBI_RECORD_TABLE_OFFSET:
                                                   MOBI_RECORD_TABLE_OFFSET + 2])[0]
     record_offsets: List[int] = []
@@ -261,14 +277,16 @@ def _parse_mobi_toc(path: str) -> List[Tuple[int, str, int]]:
         record_pointer += 8
     if not record_offsets:
         raise ValueError('PDB记录列表为空')
+    # 0 号记录是 MOBI 头（其后紧跟 PalmDOC 文本流），其偏移 16 处应为 "MOBI" 魔数
     record_zero_bytes = file_bytes[record_offsets[0]:]
     if record_zero_bytes[16:20] != MOBI_MAGIC:
         raise ValueError('不是有效的MOBI文件')
     header_length = _be32(record_zero_bytes, MOBI_HEADER_OFFSET_LENGTH)
     codepage_id = _be32(record_zero_bytes, MOBI_HEADER_OFFSET_CODEPAGE)
+    # 按 MOBI 头声明的代码页选择解码编码，未知代码页回退 utf-8
     encoding_name = CODEPAGE_ENCODING_MAP.get(codepage_id, 'utf-8')
 
-    # NCX/INDX 索引（相对 record0 起点的偏移 0xF4；旧版头无此字段）
+    # NCX/INDX 索引记录号位于 record0 偏移 0xF4；仅新版（头部足够长）才有该字段
     if header_length + 16 >= MOBI_HEADER_MIN_LENGTH_WITH_NCX:
         ncx_index = _be32(record_zero_bytes, MOBI_NCX_INDEX_OFFSET)
     else:
@@ -284,13 +302,14 @@ def _parse_indx_toc(file_bytes: bytes, record_offsets: List[int], ncx_index: int
     main_record = file_bytes[record_offsets[ncx_index]:]
     if main_record[:4] != INDX_MAGIC:
         raise ValueError('目录索引（INDX）无效')
+    # INDX 头 4..56 字节为 13 个大端字段：0=TAGX段偏移 5=索引条目数 12=CTOC 记录数
     header_fields = struct.unpack('>13L', main_record[4:56])
     tag_section_offset, index_count, nctoc = header_fields[0], header_fields[5], header_fields[12]
     control_byte_count, tag_table = _read_tag_table(main_record, tag_section_offset)
     if not tag_table:
         raise ValueError('目录索引（INDX）缺少TAGX表')
 
-    # CTOC 表：KEY(文本偏移) -> 解码文本
+    # CTOC 表：目录文本池，key 为文本在记录内的字节偏移（VWI 长度前缀 + 文本 连续存放）
     ctoc_text_map: Dict[int, str] = {}
     ctoc_record_start = ncx_index + index_count + 1
     for record_index in range(nctoc):
@@ -306,6 +325,7 @@ def _parse_indx_toc(file_bytes: bytes, record_offsets: List[int], ncx_index: int
             cursor += text_length
             ctoc_text_map[key] = title_bytes.decode(encoding_name, errors='replace')
 
+    # 每个 INDX 记录含 IDXT 偏移表，指向若干条目录条目；(文本, 层级, 首子索引, 末子索引)
     entry_records: List[Tuple[str, int, int, int]] = []  # (文本, 层级, 首子索引, 末子索引)
     for entry_index in range(index_count):
         record_index = ncx_index + 1 + entry_index
@@ -321,9 +341,11 @@ def _parse_indx_toc(file_bytes: bytes, record_offsets: List[int], ncx_index: int
             entry_positions.append(struct.unpack(
                 '>H', record_bytes[idxt_section_offset + 4 + 2 * position_index:
                                    idxt_section_offset + 6 + 2 * position_index])[0])
+        # 追加段结束偏移作为哨兵，用于界定每条目的起始/结束字节位置
         entry_positions.append(idxt_section_offset)
         for position_index in range(entry_count):
             entry_start, entry_end = entry_positions[position_index], entry_positions[position_index + 1]
+            # 条目内嵌短文本（1 字节长度前缀），长文本统一放 CTOC 表按偏移引用
             text_length = record_bytes[entry_start]
             inline_text = record_bytes[entry_start + 1:entry_start + 1 + text_length]
             tag_values_map = _get_tag_map(control_byte_count, tag_table, record_bytes,
@@ -347,6 +369,7 @@ def _parse_indx_toc(file_bytes: bytes, record_offsets: List[int], ncx_index: int
     sequence_counter = [0]
     toc_entries: List[Tuple[int, str, int]] = []
 
+    # 按"首子/末子条目索引"区间递归重建树：level 即缩进层级，计数顺序即 [p序号]
     def walk_children(start_index: int, end_index: int, level: int) -> None:
         if start_index < 0:
             start_index = 0
@@ -354,6 +377,7 @@ def _parse_indx_toc(file_bytes: bytes, record_offsets: List[int], ncx_index: int
             end_index = len(entry_records)
         for entry_index in range(start_index, end_index):
             entry_title, heading_level, first_child_index, last_child_index = entry_records[entry_index]
+            # 仅处理与当前层级匹配的条目，避免重复遍历父级区间内的子级条目
             if heading_level != level:
                 continue
             sequence_counter[0] += 1
@@ -387,8 +411,10 @@ def _parse_ncx(file_bytes: bytes) -> List[Tuple[int, str, int]]:
     sequence_counter = [0]
     toc_entries: List[Tuple[int, str, int]] = []
 
+    # navPoint 可嵌套：递归下降一层 depth+1（对应输出缩进），遍历顺序即阅读顺序
     def walk_navpoints(nav_points, depth: int) -> None:
         for nav_point in nav_points:
+            # 标题取自 navLabel/text 元素；计数对所有 navPoint 递增，标题为空也占序号
             label = _find(nav_point, 'navLabel', _NCX_NS)
             title = ''
             if label is not None:

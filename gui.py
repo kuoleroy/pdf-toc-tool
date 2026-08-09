@@ -1,5 +1,18 @@
 # -*- coding: utf-8 -*-
-"""tkinter 图形界面（ttkbootstrap 现代主题，可选依赖）"""
+"""PDF 书签工具的 Tkinter 图形界面。
+
+整体布局：顶部状态栏（含主题切换按钮）→ 左侧任务导航（可拖拽调宽）+ 右侧
+内容区（文件面板 / 五个任务参数页 / 预览·日志）→ 底部进度条与操作按钮 →
+快捷键提示条。
+
+实现要点：
+- ttkbootstrap 为可选依赖（HAS_TTKB）：未安装时回退 ttk 默认主题，功能不受影响；
+- tkinterdnd2 为可选依赖（HAS_DND）：未安装时降级为普通窗口，无法拖拽文件；
+- 后台任务经 taskmgr.TaskManager 在子进程执行，UI 通过轮询消息队列
+  （_poll_queue）刷新进度/日志/结果，期间可暂停（pause_event）与停止（cancel_event）；
+- 暗色主题下 outline 系列按钮自绘亮色样式（OUTLINE_DARK_STYLES）：ttkbootstrap
+  的 outline 用图片渲染、暗色下文字不可见，且无法用 style map 修复。
+"""
 import os
 import re
 import tkinter as tk
@@ -81,6 +94,8 @@ OUTLINE_DARK_STYLES = {
 }
 OUTLINE_STYLE_TO_BOOT = {'darkoutline.%s' % boot.split('-')[0]: boot
                          for boot in OUTLINE_DARK_STYLES}
+# 反向映射：自绘样式名(如 darkoutline.primary) → 原始bootstyle(如 primary-outline)，
+# 主题切换遍历按钮时据此识别当前样式属于哪个 outline 变体
 
 
 def _outline_dark_style(bootstyle: str) -> str:
@@ -167,7 +182,14 @@ def _Label(parent, **kwargs) -> tk.Widget:
 
 
 class App:
+    """主界面类：构建全部控件、管理导航/主题切换/拖拽，并调度后台任务与结果展示。"""
+
     def __init__(self, root: tk.Tk) -> None:
+        """初始化：设置窗口与全局字体，创建任务管理器，按序构建三块布局并注册快捷键。
+
+        关键内部状态：_task 当前任务类型（None 表示空闲）、_paused 暂停标志、
+        _watchdog_id 无进度提示的定时器句柄、_nav_guard 导航回写防重入开关。
+        """
         self.root = root
         _apply_global_font(root)  # 独立实例化（如测试）时也保证字体生效
         root.title('PDF 书签工具 v%s' % VERSION)
@@ -216,6 +238,7 @@ class App:
         """顶部状态栏：程序名 | 当前任务 | 当前文件 | 主题切换（配色随主题联动）"""
         status_bar = tk.Frame(self.root, bg=SB_BG)
         status_bar.grid(row=0, column=0, sticky='ew')
+        # column3(文件名)设weight=1，窗口拉宽时文件名区拉伸、其余列不动
         status_bar.grid_columnconfigure(3, weight=1)
         self._sb_bar = status_bar
         self._sb_title = tk.Label(status_bar, text='◆ PDF书签工具', bg=SB_BG, fg='#e8e8e8',
@@ -237,6 +260,8 @@ class App:
         self._sb_theme_btn.grid(row=0, column=4, padx=10, pady=4)
 
     def _build_nav_and_content(self) -> None:
+        """构建核心区域：左侧任务导航（Listbox）+ 宽度拖拽分隔条 + 右侧内容区；
+        右侧自上而下为共享文件面板、随导航切换的参数区（_pages）、共享预览/日志"""
         main = ttk.Frame(self.root)
         main.grid(row=1, column=0, sticky='nsew', padx=8, pady=4)
 
@@ -491,6 +516,7 @@ class App:
     # ---- 底部操作区 ----
 
     def _build_bottom(self) -> None:
+        """构建底部操作区：进度条（任务期间显示）+ 清空日志/执行/暂停/停止按钮 + 快捷键提示条"""
         # 进度条与按钮行放在日志区下方，grid 固定行不会因主区拉伸被挤压
         progress_frame = ttk.Frame(self.root)
         progress_frame.grid(row=2, column=0, sticky='ew', padx=8, pady=(4, 2))
@@ -520,6 +546,8 @@ class App:
     # ---- 导航切换与键盘 ----
 
     def _bind_keys(self) -> None:
+        """注册全局快捷键：数字键1-5切换任务、Ctrl+T切换主题；
+        bind 在 root 上，光标位于输入框时由 _nav_key 放行以免误切页"""
         for index in range(1, len(NAV_ITEMS) + 1):
             self.root.bind('<Key-%d>' % index, lambda event, n=index: self._nav_key(n))
         self.root.bind('<Control-t>', self._toggle_theme_key)
@@ -534,6 +562,7 @@ class App:
         return 'break'
 
     def _toggle_theme_key(self, _event=None) -> str:
+        """Ctrl+T 快捷键入口：转发给 _toggle_theme 并吞掉事件"""
         self._toggle_theme()
         return 'break'
 
@@ -547,6 +576,7 @@ class App:
         self._set_theme(new_theme)
 
     def _on_nav_select(self, _event=None) -> None:
+        """点击导航项触发页面切换；_nav_guard 防止程序侧回写选中项时再次进入本回调"""
         if self._nav_guard:
             return
         selection = self.nav.curselection()
@@ -556,11 +586,13 @@ class App:
     # ---- 导航宽度拖拽 ----
 
     def _sash_press(self, _event) -> str:
+        """分隔条按下：记录鼠标起点与导航栏当前宽度，供拖拽时计算增量"""
         self._sash_start_x = _event.x_root
         self._sash_start_width = self._nav_frame.winfo_width()
         return 'break'
 
     def _sash_drag(self, event) -> str:
+        """分隔条拖拽：按鼠标水平位移调整导航栏宽度，并限制在 NAV_WIDTH_MIN~MAX 之间"""
         if not hasattr(self, '_sash_start_x'):
             return 'break'
         delta = event.x_root - self._sash_start_x
@@ -632,6 +664,7 @@ class App:
         self._walk_refresh_outline(self.root)
 
     def _walk_refresh_outline(self, widget: tk.Widget) -> None:
+        """递归遍历 widget 树，重设所有 outline 系按钮的样式为当前主题对应的形态"""
         for child in widget.winfo_children():
             if child.winfo_class() == 'TButton':
                 current_style = str(child.cget('style'))
@@ -700,6 +733,7 @@ class App:
 
     def browse(self, target_var: tk.StringVar, title: str,
                file_type_filters: List[Tuple[str, str]]) -> None:
+        """通用"浏览…"按钮：打开文件选择框，选中后写入指定的 StringVar"""
         selected_path = filedialog.askopenfilename(title=title, filetypes=file_type_filters)
         if selected_path:
             target_var.set(selected_path)
@@ -720,6 +754,7 @@ class App:
         dropped_paths = list(self.root.tk.splitlist(event.data))
         pdf_path = None
         txt_path = None
+        # 按扩展名归类：PDF/电子书/Word → pdf 框，txt → txt 框；同类只取第一个（一次拖入多个）
         for dropped_path in dropped_paths:
             file_extension = os.path.splitext(dropped_path)[1].lower()
             if file_extension in PDF_EXTENSIONS and pdf_path is None:
@@ -751,6 +786,7 @@ class App:
             self.image_options.pack(side='left', padx=12)
 
     def logln(self, text: str) -> None:
+        """向日志区追加一行并滚动到底部"""
         self.log.insert('end', text + '\n')
         self.log.see('end')
 
@@ -779,6 +815,11 @@ class App:
     # ---- 后台任务 ----
 
     def _task_start(self, task_type: str, target: Callable, arguments: Tuple) -> None:
+        """启动后台任务：禁用相关按钮、复位进度，随后在子进程执行并挂起轮询与看门狗。
+
+        轮询（_poll_queue）与看门狗（_watchdog）都用 root.after 定时回调实现；
+        任务结束前所有消息均通过队列送回主线程处理，避免直接操作 Tk 控件。
+        """
         if self._task is not None:
             messagebox.showwarning('提示', '任务正在进行中')
             return
@@ -832,10 +873,12 @@ class App:
         return finished_type
 
     def _prog_reset(self) -> None:
+        """进度条复位为确定模式、0 进度"""
         self.prog.stop()
         self.prog.configure(mode='determinate', value=0, maximum=100)
 
     def _prog_show(self, done: int, total: int, message: str) -> None:
+        """刷新进度条与提示文字；收到新进度即重置看门狗定时器（说明仍在推进）"""
         if self._task is None:
             return
         self._has_progress = True
@@ -847,11 +890,13 @@ class App:
         self._watchdog_schedule()
 
     def _watchdog_schedule(self) -> None:
+        """（重新）启动看门狗定时器：WATCHDOG_INTERVAL_MS 后若无新进度则提示等待"""
         if self._watchdog_id is not None:
             self.root.after_cancel(self._watchdog_id)
         self._watchdog_id = self.root.after(WATCHDOG_INTERVAL_MS, self._watchdog)
 
     def _watchdog(self) -> None:
+        """看门狗触发：任务长时间无进度时仅更新提示文字，避免用户误以为卡死"""
         self._watchdog_id = None
         if self._task is None:
             return
@@ -869,6 +914,12 @@ class App:
             self.logln('提示: 无法打开文件夹 %s（%s）' % (folder_path, error))
 
     def _poll_queue(self) -> None:
+        """后台消息队列轮询（每 POLL_INTERVAL_MS 一次）：取到一条消息则按类型
+        分发处理（进度刷新 / 各种"完成"分支 / 错误），无消息则继续安排下次轮询。
+
+        消息格式：message[0] 为类型字符串，其余字段因类型而异；
+        各 "xxx_done" 分支在收尾后弹出完成框并打开输出目录。
+        """
         if self._task is None:
             return
         message = self._tm.poll_message()
@@ -880,6 +931,7 @@ class App:
             _kind, done, total, progress_message = message
             self._prog_show(done, total, progress_message)
         elif message_kind == 'done':
+            # 图片提取完成
             finished_type = self._task_end()
             _kind, output_dir, image_count = message
             self.logln('提取完成: %d 张%s' % (
@@ -888,12 +940,14 @@ class App:
             messagebox.showinfo('完成', '已提取 %d 张图片\n%s' % (image_count, output_dir))
             self._open_folder(output_dir)
         elif message_kind == 'done_write':
+            # 书签写入完成（写入书签 / 确认写入OCR结果共用）
             self._task_end()
             _kind, output_path, bookmark_count = message
             self.logln('写入完成: %s（%d 条书签）' % (output_path, bookmark_count))
             messagebox.showinfo('完成', '已写入 %d 条书签\n%s' % (bookmark_count, output_path))
             self._open_folder(os.path.dirname(output_path))
         elif message_kind == 'extract_done':
+            # 目录提取完成：电子书条目为 (缩进, 标题, 阅读顺序号)，PDF为 (层级, 标题, 页号)
             self._task_end()
             _kind, is_ebook, extracted_entries, output_path = message
             entry_label = ('目录（[p序号]为阅读顺序号，非页码）' if is_ebook else '书签')
@@ -912,6 +966,7 @@ class App:
                 len(extracted_entries), '目录' if is_ebook else '书签', output_path))
             self._open_folder(os.path.dirname(output_path))
         elif message_kind == 'extract_none':
+            # PDF 无书签：提示后直接结束，不弹保存
             self._task_end()
             self.logln('该PDF没有书签。')
             messagebox.showinfo('提示', '该PDF没有书签。')
@@ -935,6 +990,7 @@ class App:
             messagebox.showinfo('完成', '已转换并保存:\n%s' % output_path)
             self._open_folder(os.path.dirname(output_path))
         elif message_kind == 'ocr_done':
+            # 目录 OCR 完成：结果（已按偏移换算为[pN]页号）填入可编辑页签并切过去
             self._task_end()
             _kind, ocr_result_text = message
             self.ocr_text.delete('1.0', 'end')
@@ -951,6 +1007,7 @@ class App:
             self.logln('文字识别完成。结果在"OCR结果"页签，可编辑后[保存OCR结果…]。')
             self._notify_ocr_finished()
         elif message_kind == 'error':
+            # 任务失败：区分"用户取消"与其他错误，分别用提示框/错误框反馈
             self._task_end()
             error_message = message[1]
             if '已取消' in error_message or 'TaskCancelled' in error_message:
@@ -962,6 +1019,8 @@ class App:
         self.root.after(POLL_INTERVAL_MS, self._poll_queue)
 
     def toggle_pause(self) -> None:
+        """暂停/继续切换：通过 taskmgr 的 pause_event 通知子进程，
+        暂停生效于当前页处理完成之后（按钮文字在暂停/继续间切换）"""
         if self._task is None:
             return
         if self._paused:
@@ -976,6 +1035,7 @@ class App:
             self.logln('已暂停（当前页完成后停止）')
 
     def stop_task(self) -> None:
+        """请求停止任务：置位 cancel_event，由子进程自行响应（结果按"已取消"处理）"""
         if self._task is None:
             return
         self.logln('正在停止…')
@@ -984,6 +1044,8 @@ class App:
     # ---- 前台操作 ----
 
     def run(self) -> None:
+        """底部"执行"按钮入口：按当前操作模式分发到 写书签/提取目录/提取图片；
+        统一捕获异常转成日志+错误框（子任务自身的 try/except 除外）"""
         try:
             if self.mode.get() == 'write':
                 self.do_write()
@@ -996,6 +1058,8 @@ class App:
             messagebox.showerror('错误', str(error))
 
     def do_images(self) -> None:
+        """任务2·提取图片：解析参数（内嵌/渲染、格式、页号范围），
+        确定输出目录（默认源文件同目录 "<书名>_图片"，可确认或改选），后台提取"""
         source_path = self.pdf_var.get().strip()
         if not source_path:
             raise ValueError('请选择文件')
@@ -1092,6 +1156,8 @@ class App:
         return start_page, end_page
 
     def do_write(self) -> None:
+        """任务1·写入书签：解析目录txt为书签条目（需计算印刷页码→PDF页号偏移，
+        但 txt 内已含[pN]则跳过偏移），确认后后台写入副本或原文件"""
         pdf_path = self.pdf_var.get().strip()
         txt_path = self.txt_var.get().strip()
         if not pdf_path or not txt_path:
@@ -1106,6 +1172,7 @@ class App:
                 txt_content = file_handle.read()
         except OSError as io_error:
             raise ValueError('读取txt失败: %s' % io_error)
+        # 已含 [pN] 直写PDF页号时无需偏移；否则必须由"正文第一页"两框计算偏移
         if not RE_OCR_PDF_PAGE.search(txt_content):
             offset = self._field_offset()
             if offset is None:
@@ -1133,6 +1200,7 @@ class App:
                          (pdf_path, toc_entries, self.outmode_var.get()))
 
     def do_extract(self) -> None:
+        """任务2·提取目录：校验文件后后台提取书签/电子书目录"""
         source_path = self.pdf_var.get().strip()
         if not source_path:
             raise ValueError('请选择PDF或电子书文件')
@@ -1143,6 +1211,7 @@ class App:
                          (source_path, self.e_pdfpage.get()))
 
     def do_unlock(self) -> None:
+        """任务4·解锁：选择另存路径后后台去除密码（原文件不变）"""
         try:
             pdf_path = self.pdf_var.get().strip()
             if not pdf_path:
@@ -1168,6 +1237,7 @@ class App:
             messagebox.showerror('错误', str(error))
 
     def do_encrypt(self) -> None:
+        """任务4·加密：选择另存路径后后台加密（AES-256），默认文件名带密码"""
         try:
             pdf_path = self.pdf_var.get().strip()
             if not pdf_path:
@@ -1193,6 +1263,7 @@ class App:
             messagebox.showerror('错误', str(error))
 
     def do_doc2pdf(self) -> None:
+        """任务5·Word转PDF：校验扩展名（.docx 纯Python引擎，老格式需Office）后后台转换"""
         try:
             source_path = self.pdf_var.get().strip()
             if not source_path:
@@ -1219,6 +1290,7 @@ class App:
             messagebox.showerror('错误', str(error))
 
     def do_doc2html(self) -> None:
+        """任务5·Word转HTML：仅 .docx 可用纯Python引擎转换"""
         try:
             source_path = self.pdf_var.get().strip()
             if not source_path:
@@ -1244,6 +1316,7 @@ class App:
             messagebox.showerror('错误', str(error))
 
     def _get_ocr_args(self) -> Tuple[str, int, int]:
+        """从界面读取OCR入参：文件路径 + 目录页PDF页号区间；缺失/非法抛 ValueError"""
         pdf_path = self.pdf_var.get().strip()
         if not pdf_path:
             raise ValueError('请先在"选择文件"里选择PDF')
@@ -1272,6 +1345,9 @@ class App:
             first_printed_page = int(self.first_print_var.get().strip())
             if first_pdf_page < 1 or first_printed_page < 1:
                 return None
+            # 偏移量公式：PDF页号 = 印刷页码 + 偏移
+            # （印刷页码 first_printed_page 那一页对应 PDF 页 first_pdf_page，
+            #   故 offset = (first_pdf_page - 1) - first_printed_page）
             return (first_pdf_page - 1) - first_printed_page
         except ValueError:
             return None
@@ -1282,6 +1358,7 @@ class App:
         if pdf_path and os.path.splitext(pdf_path)[1].lower() not in core.OCR_EXTENSIONS:
             raise ValueError('OCR识别仅支持PDF/EPUB/MOBI文件，请选择支持的文件')
         range_text = self.ocr_range_var.get().strip()
+        # 条件不满足时弹 dlg 对话框补齐 文件/页号范围（含取消分支）
         if (not pdf_path or not os.path.isfile(pdf_path)
                 or not RE_PAGE_RANGE.match(range_text)):
             ocr_fields = dlg.ask_ocr_args(self.root, self.pdf_var, self.ocr_range_var)
@@ -1296,6 +1373,7 @@ class App:
             raise ValueError(str(error))
 
     def do_ocr(self) -> None:
+        """任务3·识别目录：OCR 目录页文字并附偏移换算的[pN]PDF页号，后台执行"""
         try:
             ocr_args = self._prepare_ocr_range()
             if ocr_args is None:
@@ -1318,6 +1396,7 @@ class App:
             messagebox.showerror('OCR错误', str(error))
 
     def do_ocr_text(self) -> None:
+        """任务3·识别文字：OCR 指定页纯文字（可选行尾附[pN]页号），后台执行"""
         try:
             ocr_args = self._prepare_ocr_range()
             if ocr_args is None:
@@ -1351,6 +1430,7 @@ class App:
                anchor='w', wraplength=600).pack(fill='x', padx=10, pady=2)
 
         def on_format() -> None:
+            # 格式化流程：粘贴原文 → core.format_toc_text 规范化为标准txt → 另存
             raw = text_widget.get('1.0', 'end').strip()
             if not raw:
                 status_var.set('请先粘贴外部AI识别的目录文本')
@@ -1372,7 +1452,7 @@ class App:
                 messagebox.showerror('保存失败', str(io_error))
                 return
             dialog.destroy()
-            entry_count = formatted.count('\n') - 1
+            entry_count = formatted.count('\n') - 1  # 条目数 = 行数 - 1（末尾换行不计）
             self.logln('已格式化外部AI目录并保存: %s（%d 条）' % (save_path, entry_count))
             messagebox.showinfo('完成', '已保存 %d 条目录到:\n%s' % (entry_count, save_path))
 
@@ -1394,6 +1474,7 @@ class App:
         return temp_preview_path
 
     def confirm_ocr_write(self) -> None:
+        """把"OCR结果"页签内容解析后写入书签：含[pN]免偏移，否则用两框算偏移"""
         try:
             pdf_path = self.pdf_var.get().strip()
             ocr_result_text = self.ocr_text.get('1.0', 'end')
@@ -1458,6 +1539,7 @@ class App:
             self._prompt_save_ocr_result()
 
     def save_ocr_txt(self) -> None:
+        """"保存OCR结果…"按钮：结果非空时弹保存对话框"""
         ocr_result_text = self.ocr_text.get('1.0', 'end')
         if not ocr_result_text.strip():
             messagebox.showwarning('提示', 'OCR结果为空')
@@ -1466,6 +1548,7 @@ class App:
 
 
 def main() -> int:
+    """程序入口：创建根窗口（优先支持拖放）、初始化主题与字体，进入事件循环"""
     global _BOOT
     # 优先使用支持文件拖放的根窗口；未安装 tkinterdnd2 时降级普通窗口
     root = TkinterDnD.Tk() if HAS_DND else tk.Tk()

@@ -10,6 +10,9 @@
 转 HTML（仅 .docx）：mammoth 直接转换，无需任何引擎。
 
 所有引擎都不可用且非 .docx 时，抛出清晰错误提示安装其一。
+
+文件底部的 _mp_doc_to_pdf/_mp_doc_to_html 是供 taskmgr 子进程调用的
+入口，转换结果经 multiprocessing 队列回传主进程。
 """
 import os
 import shutil
@@ -22,6 +25,8 @@ try:
 except ImportError:
     HAS_WIN32COM = False
 
+# .docx 为 OOXML 格式，可走纯 Python 引擎；.doc/.rtf/.dot/.dotx 是
+# 旧格式（二进制/RTF），只能依赖 COM 或 LibreOffice 转换
 DOC_EXTENSIONS = frozenset({'.doc', '.docx', '.rtf', '.dot', '.dotx'})
 
 SOFFICE_CANDIDATES = (
@@ -34,12 +39,15 @@ COM_PROG_IDS = ('Word.Application', 'wps.Application')
 
 WD_FORMAT_PDF = 17  # wdFormatPDF，WPS 兼容
 
+# 纯 Python 路径用的模板：STSong-Light 是 PDF 阅读器内置的中文 CID 字体，
+# 无需嵌入字体文件即可正确显示中文，但字形与 Word 有差异
 PURE_HTML_TEMPLATE = (
     '<html><head><meta charset="utf-8">'
     '<style>body { font-family: STSong-Light; }'
     'table { border-collapse: collapse; } td, th { border: 1px solid #999; padding: 2px 6px; }'
     '</style></head><body>%s</body></html>')
 
+# 浏览器查看用模板：指定系统中文字体，纯前端渲染，与 PDF 生成无关
 HTML_TEMPLATE = (
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
     '<title>%s</title>'
@@ -70,9 +78,11 @@ def _mammoth_html(docx_path: str) -> str:
 def _convert_via_com(src: str, out: str) -> None:
     """Word/WPS COM：打开文档另存为 PDF"""
     import pythoncom
+    # COM 调用前必须先在线程中初始化；本函数可能运行在子进程里
     pythoncom.CoInitialize()
     word = None
     try:
+        # 依次尝试 Word 与 WPS，谁注册了 ProgID 就用谁
         for prog_id in COM_PROG_IDS:
             try:
                 word = win32com.client.Dispatch(prog_id)
@@ -89,6 +99,7 @@ def _convert_via_com(src: str, out: str) -> None:
         word.Quit()
         word = None
     finally:
+        # 兜底清理：转换出错时也要退出 Office/WPS 并释放 COM 线程初始化
         if word is not None:
             try:
                 word.Quit()
@@ -99,6 +110,8 @@ def _convert_via_com(src: str, out: str) -> None:
 
 def _convert_via_soffice(soffice: str, src: str, out: str) -> None:
     """LibreOffice 命令行：--convert-to pdf 输出到目标目录后改名"""
+    # soffice 只接受输出目录、不接受输出文件名，产物按"源文件名.pdf"
+    # 命名，因此转换后需要移动/改名到目标路径
     out_dir = os.path.dirname(os.path.abspath(out)) or '.'
     result = subprocess.run(
         [soffice, '--headless', '--convert-to', 'pdf', '--outdir', out_dir,
@@ -107,6 +120,7 @@ def _convert_via_soffice(soffice: str, src: str, out: str) -> None:
     if result.returncode != 0:
         raise RuntimeError('LibreOffice 转换失败: %s'
                            % (result.stderr or result.stdout or '').strip())
+    # 目标路径与产物不同名时用 os.replace 改名（同盘符内是原子操作）
     base = os.path.splitext(os.path.basename(src))[0] + '.pdf'
     produced = os.path.join(out_dir, base)
     if not os.path.isfile(produced):
@@ -117,6 +131,8 @@ def _convert_via_soffice(soffice: str, src: str, out: str) -> None:
 
 def _convert_via_pure(docx_path: str, out: str) -> None:
     """纯Python：mammoth -> xhtml2pdf（中文字体 STSong-Light，无嵌入）"""
+    # 仅 .docx 可走此路径；xhtml2pdf 使用内置 CID 字体 STSong-Light，
+    # 不嵌入字体文件，部分阅读器/打印场景下渲染结果与 Word 有差异
     try:
         from xhtml2pdf import pisa
     except ImportError:
@@ -136,6 +152,9 @@ def doc_to_pdf(src: str, out: str) -> str:
     extension = os.path.splitext(src)[1].lower()
     if extension not in DOC_EXTENSIONS:
         raise ValueError('仅支持 Word 文档: %s' % ' '.join(sorted(DOC_EXTENSIONS)))
+    # 降级链：COM（效果最好）-> LibreOffice -> 纯 Python（仅 .docx）。
+    # RuntimeError 表示"未安装对应软件"，可直接忽略换下一引擎；
+    # 其他异常（如文档损坏）记录到 com_error，供最终向用户报告
     com_error = None
     if HAS_WIN32COM:
         try:
@@ -181,6 +200,8 @@ def doc_to_html(docx_path: str, out: str) -> str:
     return out
 
 
+# 子进程入口：由 taskmgr 启动，队列 q 为第一个参数；
+# 成功回传 ('convert_done', out)，失败回传 ('error', 错误文本)
 def _mp_doc_to_pdf(q, src, out) -> None:
     """子进程入口：Word转PDF -> ('convert_done', out)"""
     try:
@@ -190,6 +211,7 @@ def _mp_doc_to_pdf(q, src, out) -> None:
         q.put(('error', type(error).__name__ + ': ' + str(error)))
 
 
+# 同上：Word 转 HTML 的子进程入口，消息协议与 _mp_doc_to_pdf 一致
 def _mp_doc_to_html(q, src, out) -> None:
     """子进程入口：Word转HTML -> ('convert_done', out)"""
     try:

@@ -1,5 +1,14 @@
 # -*- coding: utf-8 -*-
-"""核心逻辑：目录txt解析、书签写入/提取、txt导出、图片提取"""
+"""核心逻辑层（PDF书签工具）：供 cli.py 等入口调用，本身不直接与用户交互。
+
+包含：
+- 目录txt解析（parse_toc / format_toc_text）：缩进层级、[pN]直接页码、续行拼接、提示行处理
+- 书签写入（build_toc / write_toc）：印刷页码偏移换算、层级平滑、fitz 增量保存
+- 书签提取（read_toc / export_toc_txt）
+- 图片提取（extract_images）：内嵌提取 / 按分辨率渲染，支持 PDF/EPUB/MOBI/AZW3/PRC
+- PDF 解锁与加密（unlock_pdf / encrypt_pdf，AES-256）
+- _mp_* 系列：多进程（multiprocessing）子进程入口，进度与结果经 Queue 回传
+"""
 import hashlib
 import os
 import posixpath
@@ -88,7 +97,7 @@ def _mp_write_toc(q, pdf_path, toc, out_mode) -> None:
         output_path = write_toc(pdf_path, toc, out_mode)
         doc = fitz.open(output_path)
         try:
-            bookmark_count = len(doc.get_toc())
+            bookmark_count = len(doc.get_toc())  # 回读实际写入的书签数
         finally:
             doc.close()
         q.put(('done_write', output_path, bookmark_count))
@@ -102,8 +111,9 @@ def unlock_pdf(pdf_path: str, password: str, output_path: str) -> None:
     try:
         if not doc.needs_pass:
             raise ValueError('该PDF没有密码保护，无需解锁')
-        if not doc.authenticate(password):
+        if not doc.authenticate(password):  # 用密码打开加密文档，错误时返回 False
             raise ValueError('密码错误，无法解锁')
+        # PDF_ENCRYPT_NONE：另存时去除加密；书签等全部内容随 doc 对象原样保留
         doc.save(output_path, encryption=fitz.PDF_ENCRYPT_NONE)
     finally:
         doc.close()
@@ -115,6 +125,8 @@ def encrypt_pdf(pdf_path: str, password: str, output_path: str) -> None:
     try:
         if doc.needs_pass:
             raise ValueError('该PDF已有密码保护，请先解锁再加密')
+        # AES-256 为 PDF 2.0 标准加密算法；user_pw=打开密码，owner_pw=权限密码，
+        # 这里统一设为同一密码（owner 密码用于限制打印/复制等权限）
         doc.save(output_path, encryption=fitz.PDF_ENCRYPT_AES_256,
                  user_pw=password, owner_pw=password)
     finally:
@@ -172,6 +184,11 @@ def parse_toc(txt_path: str) -> List[List]:
     - `#` 开头为提示行：低置信度行剥去前缀保留，其余（无页码/缺标题/页码异常）忽略
     - "目录"行（带页码）作为正常条目解析（一级），可作其后条目的父级
     - page_kind: KIND_PDF_PAGE（直接PDF页号）或 KIND_PRINT_PAGE（印刷页码，需加偏移）
+
+    页码换算约定（实际写入见 build_toc）：
+    - 印刷页码：书签PDF页 = 印刷页码 + first_pdf - 1
+      （first_pdf = 正文第1页对应的PDF页号，命令行"偏移"参数即 first_pdf-1，默认15）
+    - [pN] 免偏移写法：N 直接就是PDF页号，写入时不做任何换算
     """
     parsed_entries: List[List] = []
     pending_line: Optional[List] = None  # [缩进, 累计文本]：等待页码的续行
@@ -179,21 +196,24 @@ def parse_toc(txt_path: str) -> List[List]:
         for raw_line in file_handle:
             line = raw_line.rstrip('\r\n')
             if not line.strip():
-                continue
+                continue  # 空行跳过
             if line.startswith('#'):
+                # 提示行：仅"低置信度"前缀的行剥去前缀继续参与解析，其余提示行忽略
                 low_confidence_match = RE_LOW_CONFIDENCE.match(line)
                 if not low_confidence_match:
                     continue
                 line = low_confidence_match.group(1)
             if RE_YEAR_RANGE.match(line):
-                continue
+                continue  # 如"1980-2020"，会被误判为页码范围，整行跳过
             pdf_page_match = RE_PDF_PAGE.match(line)
             if pdf_page_match:
+                # [pN] 写法：N 即 PDF 直接页号，写入书签时免偏移
                 indent_level = len(pdf_page_match.group(1))
                 title = pdf_page_match.group(2)
                 page_number = int(pdf_page_match.group(3))
                 page_kind = KIND_PDF_PAGE
             else:
+                # 印刷页码写法：RE_RANGE 取页码范围（取结束页），RE_SINGLE 取单页
                 range_match = RE_RANGE.match(line) or RE_SINGLE.match(line)
                 if not range_match:
                     # 无页码的行：作为续行暂存，等待后续行提供页码
@@ -209,10 +229,12 @@ def parse_toc(txt_path: str) -> List[List]:
                 page_number = int(range_match.group(3))
                 page_kind = KIND_PRINT_PAGE
             if pending_line is not None:
+                # 续行拼接（条件缩进）：标题 = 无页码行累计文本 + 本行标题；
+                # 层级沿用续行（无页码行）的缩进，页码则取本行（有页码行）的
                 title = pending_line[1] + title
                 indent_level = pending_line[0]
                 pending_line = None
-            title = RE_TRAILING_DOTS.sub('', title).strip()
+            title = RE_TRAILING_DOTS.sub('', title).strip()  # 去掉标题末尾的点线"....."
             if title:
                 parsed_entries.append([indent_level, title, page_kind, page_number])
     if pending_line is not None:
@@ -259,6 +281,7 @@ def levels_from_indent(entries: List[List]) -> List[List]:
     converted_entries: List[List] = []
     for indent_level, title, page_kind, page_number in entries:
         converted_entries.append(
+            # 0级缩进=一级标题，3级以上统一封顶为三级（PDF书签层级上限）
             [min(indent_level + 1, MAX_TOC_LEVEL), title, page_kind, page_number])
     return converted_entries
 
@@ -268,17 +291,18 @@ def build_toc(entries: List[List], offset: int) -> List[List]:
 
     层级平滑：不允许跳级（L1 直接到 L3 会被压到 L2），避免 PDF 报 bad hierarchy level。
     pdf_page = 印刷页码 + offset + 1（offset 为 0-based PDF 索引差）。
+    换算等价写法：书签PDF页 = 印刷页码 + first_pdf - 1（first_pdf = 正文第1页PDF页号）。
     """
     built_toc: List[List] = []
     previous_level = 0
     for level, title, page_kind, page_number in entries:
         if level > previous_level + 1:
-            level = previous_level + 1
+            level = previous_level + 1  # 跳级压缩：禁止 L1 直接到 L3（PDF 会报层级错误）
         previous_level = max(level, 1)
         if page_kind == KIND_PDF_PAGE:
-            pdf_page = page_number
+            pdf_page = page_number  # [pN] 直接页号，免偏移
         else:
-            pdf_page = page_number + offset + 1
+            pdf_page = page_number + offset + 1  # 印刷页码 -> PDF页号（+first_pdf-1）
         if pdf_page < 1:
             raise ValueError('页码越界: %s [%d]' % (title, page_number))
         built_toc.append([level, title, pdf_page])
@@ -293,12 +317,15 @@ def write_toc(pdf_path: str, toc: List[List], out_mode: str = 'copy') -> str:
     """
     target_path = pdf_path
     if out_mode == 'copy':
+        # 副本模式：先整体复制原文件，再往副本上写书签，原文件保持不动
         base_name, extension = os.path.splitext(pdf_path)
         target_path = base_name + OUTPUT_COPY_SUFFIX + extension
         shutil.copyfile(pdf_path, target_path)
     doc = fitz.open(target_path)
     try:
-        doc.set_toc(toc)
+        doc.set_toc(toc)  # PyMuPDF 一次调用即可写入带层级的书签（outline）
+        # 增量保存：只追加改动部分，未修改的页面数据不动，速度快且不重新压缩；
+        # PDF_ENCRYPT_KEEP 沿用原文件的加密设置，避免破坏已加密PDF的结构
         doc.save(target_path, incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
     finally:
         doc.close()
@@ -309,7 +336,7 @@ def read_toc(pdf_path: str) -> List[List]:
     """提取PDF书签 -> [[level, title, pdf_page]]"""
     doc = fitz.open(pdf_path)
     try:
-        return doc.get_toc()
+        return doc.get_toc()  # level 从1开始；无书签时返回空列表
     finally:
         doc.close()
 
@@ -335,7 +362,7 @@ def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[i
     if fmt not in IMAGE_FORMATS:
         raise ValueError('不支持的图片格式: %s（支持 %s）' % (fmt, '/'.join(sorted(IMAGE_FORMATS))))
     if fmt == 'orig' and dpi:
-        fmt = 'png'
+        fmt = 'png'  # 渲染模式没有"原样"概念，未指定格式时默认转 PNG
     if dpi is not None and not (DPI_MIN <= dpi <= DPI_MAX):
         raise ValueError('分辨率dpi应在 %d-%d 之间' % (DPI_MIN, DPI_MAX))
     if not (JPEG_QUALITY_MIN <= quality <= JPEG_QUALITY_MAX):
@@ -350,6 +377,8 @@ def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[i
     os.makedirs(out_dir, exist_ok=True)
     file_ext = os.path.splitext(pdf_path)[1].lower()
     if file_ext in EBOOK_INLINE_EXTENSIONS and not dpi:
+        # 电子书内嵌提取：EPUB 走 zip 解压（HTML/SVG 引用的位图），
+        # MOBI/AZW3/PRC 走 PalmDB 记录解析；仅支持 orig 原样保存
         if fmt != 'orig':
             raise ValueError('%s内嵌提取仅支持原样保存（格式orig）' % file_ext[1:].upper())
         if file_ext == EPUB_EXTENSION:
@@ -367,10 +396,12 @@ def extract_images(pdf_path: str, out_dir: Optional[str] = None, dpi: Optional[i
         raise ValueError('无法打开文件: %s（%s）' % (os.path.basename(pdf_path), error))
     try:
         if dpi:
+            # 渲染模式：按指定 dpi 把每页栅格化为图片（PDF/EPUB/MOBI 可渲染）
             image_count = _export_rendered_pages(doc, out_dir, dpi, fmt, quality,
                                                  progress, cancel_event, pause_event,
                                                  start_page, end_page)
         else:
+            # 内嵌模式：直接读取 PDF 中嵌入的原始图片对象（按内容 MD5 去重）
             image_count = _export_inline_images(doc, out_dir, fmt, quality,
                                                 progress, cancel_event, pause_event,
                                                 start_page, end_page)
@@ -522,9 +553,12 @@ def _export_mobi_images(mobi_path: str, out_dir: str, progress: Optional[Callabl
     """
     with open(mobi_path, 'rb') as file_handle:
         palm_data = file_handle.read()
+    # PalmDB 头部校验：偏移60-64处必须是魔数"BOOK"（MOBI 专有标志）
     if len(palm_data) < 78 or palm_data[60:64] != b'BOOK':
         raise ValueError('无法打开文件: %s（不是有效的MOBI/AZW3文件）'
                          % os.path.basename(mobi_path))
+    # PalmDB 记录表：偏移76-78为大端序记录总数；
+    # 其后每8字节一条记录索引（4字节大端偏移 + 4字节属性），偏移相对文件头
     record_count = struct.unpack('>H', palm_data[76:78])[0]
     record_offsets = []
     for index in range(record_count):
@@ -539,10 +573,10 @@ def _export_mobi_images(mobi_path: str, out_dir: str, progress: Optional[Callabl
             progress(index + 1, record_count, '扫描记录 %d/%d' % (index + 1, record_count))
         start = record_offsets[index]
         end = record_offsets[index + 1] if index + 1 < record_count else len(palm_data)
-        record_data = palm_data[start:end]
+        record_data = palm_data[start:end]  # 按相邻两条记录偏移切出本条记录内容
         image_format = _detect_image_format(record_data)
         if image_format is None:
-            continue
+            continue  # 非图片记录（文本/元数据等）直接跳过
         detected_index += 1
         if start_page is not None and detected_index < start_page:
             continue
@@ -579,6 +613,7 @@ def _export_rendered_pages(doc, out_dir: str, dpi: int, fmt: str, quality: int,
     exported_count = 0
     for page_index in range(start_index, end_index):
         check_task(cancel_event, pause_event)
+        # 按 dpi 渲染页面为位图；alpha 透明通道：jpeg 不支持透明，png 保留
         pixmap = doc[page_index].get_pixmap(dpi=dpi, alpha=(fmt != 'jpeg'))
         file_name = '第%03d页.%s' % (page_index + 1, EXTENSION_BY_FORMAT[fmt])
         pixmap.save(os.path.join(out_dir, file_name), jpg_quality=quality)
@@ -597,13 +632,13 @@ def _extract_single_image(doc, xref: int, fmt: str, quality: int) -> Optional[by
     try:
         if fmt == 'orig':
             image_info = doc.extract_image(xref)
-            return image_info['image']
+            return image_info['image']  # 原样保存：直接取嵌入文件的原始字节
         pixmap = fitz.Pixmap(doc, xref)
         if fmt == 'jpeg' and pixmap.alpha:
-            pixmap = fitz.Pixmap(fitz.csRGB, pixmap)
+            pixmap = fitz.Pixmap(fitz.csRGB, pixmap)  # jpeg 不支持透明，先转为RGB再编码
         return pixmap.tobytes(fmt, jpg_quality=quality)
     except (ValueError, KeyError, RuntimeError):
-        return None
+        return None  # 单张图损坏/不支持：跳过，不影响整体提取
 
 
 def _export_inline_images(doc, out_dir: str, fmt: str, quality: int,
@@ -618,7 +653,7 @@ def _export_inline_images(doc, out_dir: str, fmt: str, quality: int,
     for page_index in range(start_index, end_index):
         check_task(cancel_event, pause_event)
         for image_ref in doc.get_page_images(page_index, full=True):
-            xref_number = image_ref[0]
+            xref_number = image_ref[0]  # 图片对象在PDF中的xref编号（提取文件名里也用它标识）
             image_data = _extract_single_image(doc, xref_number, fmt, quality)
             if image_data is None:
                 continue

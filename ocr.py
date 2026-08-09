@@ -22,6 +22,7 @@ import numpy as np
 
 from core import check_task
 
+# 尝试导入 RapidOCR；环境缺依赖时 HAS_OCR=False，仅 OCR 相关功能不可用（模块其余功能不受影响）
 HAS_OCR = False
 _POCR_MODULE = None
 try:
@@ -53,7 +54,7 @@ OFFSET_MAX = 300              # 偏移量合法上限
 OFFSET_MIN_VOTES = 2          # 偏移最少需要的一致票数
 OCR_DPI_DEFAULT = 150
 
-_ocr_instances = {}
+_ocr_instances = {}  # OCR 引擎实例缓存（进程内单例，避免重复加载模型）
 
 
 def _mp_ocr_task(q, pdf_path, start_page, end_page, cancel_event, pause_event, offset) -> None:
@@ -63,9 +64,11 @@ def _mp_ocr_task(q, pdf_path, start_page, end_page, cancel_event, pause_event, o
     offset 由调用方在识别前填写正文第一页两框计算，行尾直接输出 [pN] PDF页号免偏移。
     """
     try:
+        # 子进程内加载引擎（multiprocessing 下模型实例无法跨进程共享，各子进程独立加载）
         engine = load_ocr()
         text = ocr_to_txt(pdf_path, start_page, end_page, ocr=engine,
                           offset=offset,
+                          # 进度/取消/暂停统一经队列转发，父进程侧轮询后驱动 UI 与按钮状态
                           progress=lambda done, total, message: q.put(('progress', done, total, message)),
                           cancel_event=cancel_event, pause_event=pause_event)
         # 目录第一行常无页码，补"输入范围开头"的页号兜底（用户以输入开头为基准），
@@ -116,16 +119,20 @@ def render_pages(pdf_path: str, start_page: int, end_page: int, dpi: int = OCR_D
     try:
         total_pages = max(end_page - start_page + 1, 0)
         for page_number in range(start_page, end_page + 1):
+            # 参数使用 1-based PDF 页号，fitz 内部索引起点为 0，需先减一
             page_index = page_number - 1
             if page_index < 0 or page_index >= doc.page_count:
                 continue
+            # 取消检查：取消信号置位立即抛异常终止任务
             if cancel_event is not None and cancel_event.is_set():
                 raise RuntimeError('任务已取消')
+            # 暂停检查：暂停期间循环等待（页面渲染可中途挂起/继续）
             if pause_event is not None:
                 while pause_event.is_set():
                     if cancel_event is not None and cancel_event.is_set():
                         raise RuntimeError('任务已取消')
                     time.sleep(0.1)
+            # 按 DPI 渲染为 RGB 位图，再转为 numpy 数组（H x W x 3）供 OCR 推理
             pixmap = doc[page_index].get_pixmap(dpi=dpi, colorspace=fitz.csRGB, alpha=False)
             pixel_array = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
                 pixmap.height, pixmap.width, 3)
@@ -152,6 +159,7 @@ def _ocr_images(ocr_engine, images: List[Tuple[int, np.ndarray]],
                 if cancel_event is not None and cancel_event.is_set():
                     raise RuntimeError('任务已取消')
                 time.sleep(0.1)
+        # RapidOCR 返回 (识别结果, 剩余耗时) 元组；部分版本直接返回列表，需兼容两种形态
         raw_output = ocr_engine(image_array)
         ocr_results = raw_output[0] if isinstance(raw_output, tuple) else raw_output
         if not ocr_results:
@@ -163,6 +171,7 @@ def _ocr_images(ocr_engine, images: List[Tuple[int, np.ndarray]],
             bbox, text, score = result_item[0], result_item[1], result_item[2]
             if not text:
                 continue
+            # 取文本框左上角 x 坐标作为缩进推断依据（归一化坐标，越靠右缩进越深）
             x_position = 0.0
             try:
                 x_position = float(np.asarray(bbox).reshape(-1)[0])
@@ -181,6 +190,7 @@ def _infer_indent_level(x_position: float, min_x_position: Optional[float],
     """按 x 坐标相对最小x的偏移推断缩进级"""
     if min_x_position is None:
         return 0
+    # 以本页最左 x 为基准：0.6 步长内为 0 级，0.6~2.2 步长为 1 级，更远视为 2 级（阈值带防 OCR 抖动）
     offset_from_min = x_position - min_x_position
     if offset_from_min < step * 0.6:
         return 0
@@ -211,10 +221,12 @@ def _extract_entries(pdf_path: str, start_page: int, end_page: int, ocr_engine, 
         raise ValueError('OCR未识别到任何文字（请确认页码范围是否为目录页）')
     page_rows: dict = {}
     for page_number, x_position, text, score in recognized_lines:
+        # 按页分组：缩进需在同一页内比较 x 坐标才有效
         page_rows.setdefault(page_number, []).append((x_position, text, score))
     extracted_entries: List[Tuple[int, int, str, Optional[int], Optional[int], float]] = []
     for page_number in sorted(page_rows):
         rows = page_rows[page_number]
+        # 该页所有识别行中最小的 x 坐标，作为 0 级缩进基准
         min_x_position = min(row[0] for row in rows)
         for x_position, text, score in rows:
             cleaned_text = RE_DOTS.sub('', text).strip()
@@ -225,6 +237,7 @@ def _extract_entries(pdf_path: str, start_page: int, end_page: int, ocr_engine, 
                 continue
             title = cleaned_text
             start_number = end_number = None
+            # 行尾页码解析：优先匹配 "19-22" 范围或 "19 22" 双数字格式，其次匹配单个数字
             page_match = (RE_PAGE_RANGE_TAIL.search(cleaned_text)
                           or RE_TWO_NUMBERS_TAIL.search(cleaned_text))
             if page_match:
@@ -236,6 +249,7 @@ def _extract_entries(pdf_path: str, start_page: int, end_page: int, ocr_engine, 
                 if page_match:
                     start_number = end_number = int(page_match.group(1))
                     title = cleaned_text[:page_match.start()]
+            # 清理标题尾部残留的占位点线/分隔符/括号，仅保留真正的标题文字
             title = title.rstrip('　 .…·:：-—–（(').strip()
             extracted_entries.append((
                 page_number, _infer_indent_level(x_position, min_x_position),
@@ -254,6 +268,7 @@ def _format_page_number(start_number: Optional[int], end_number: Optional[int],
         return ''
     if offset is None:
         return str(start_number)
+    # PDF 页号 = 印刷页码 + 偏移 + 1（印刷页 p 对应 0-based PDF 索引 p + offset，转 1-based 再 +1）
     return '[p%d]' % (start_number + offset + 1)
 
 
@@ -264,6 +279,7 @@ def _split_glued_page_numbers(glued_text: str) -> Optional[Tuple[int, int]]:
     且 b-a<=GLUED_PAGE_SPAN_MAX。
     """
     best_split: Optional[Tuple[int, int]] = None
+    # 遍历所有切分点，只保留合法组合中"跨度最小"的一对（页码跨度通常很小）
     for split_index in range(1, len(glued_text)):
         first_number, second_number = int(glued_text[:split_index]), int(glued_text[split_index:])
         if (PAGE_NUMBER_MIN <= first_number < second_number <= GLUED_PAGE_NUMBER_MAX
@@ -328,6 +344,7 @@ def ocr_to_txt(pdf_path: str, start_page: int, end_page: int, ocr=None, dpi: int
     # (页码, 输出行索引, 缩进, 标题, 是否已有页码)：最近的有标题行，供无标题页码行合并
     last_titled_entry = None
     for page_number, indent_level, title, start_number, end_number, score in entries:
+        # 逐条四路处理：无页码 -> 纯数字标题当页码 -> 粘连拆分 -> 正常标题行
         if start_number is None:
             # 纯数字标题视为被拆分出的页码（如 OCR 把 "86 94" 读成一行 "8694" 前的数字行）
             if title and title.isdigit() and len(title) <= NUMERIC_TITLE_MAX_LEN \
@@ -439,6 +456,7 @@ def extract_text(pdf_path: str, start_page: int, end_page: int, ocr=None,
         progress and (lambda done, total, message: progress(total_pages + done, 2 * total_pages, message)),
         cancel_event, pause_event)
     output_lines: List[str] = []
+    # 按页号升序输出，同一页内保持 OCR 返回顺序（即版面阅读顺序）
     recognized_pages = sorted({line_page_number for line_page_number, _x, _t, _s in recognized_lines})
     for page_number in recognized_pages:
         if with_page_marks:
@@ -513,10 +531,12 @@ def detect_offset(pdf_path: str, start_page: int, end_page: int, ocr=None,
                 if not (PAGE_NUMBER_MIN <= printed_number <= FOOTER_NUMBER_MAX):
                     continue
                 bbox_array = np.asarray(bbox, dtype=float)
+                # 仅取页面上部（页眉区）的独立数字行作为候选印刷页码，避免把正文数字误判
                 header_y_ratio = bbox_array[:, 1].min() / page_height
                 if header_y_ratio <= FOOTER_HEADER_Y_RATIO:
                     candidates.append((page_index, printed_number))
         if candidates:
+            # 投票法：每一对 (PDF索引, 印刷页码) 产生一个候选偏移，取票数最多且合法的偏移
             offset_votes: dict = {}
             for page_index, printed_number in candidates:
                 offset_candidate = page_index - printed_number
