@@ -207,6 +207,7 @@ class App:
         self._last_ocr_type: Optional[str] = None  # 最近一次OCR类型: 'toc'目录 / 'text'文字
         self._current_page = 1
         self._nav_guard = False
+        self.mode = tk.StringVar(value='write')  # 操作模式：write/extract/images
 
         # 输入框格式限制：非法字符（汉字/英文/符号）输入时不显示
         self._vcmd_digits = (root.register(self._validate_digits), '%P')
@@ -370,7 +371,6 @@ class App:
         self.btn_browse_txt.pack(side='left')
         action_frame = _labelframe(page, '写入书签（txt → PDF）', 'primary')
         action_frame.pack(fill='x', **PADDING)
-        self.mode = tk.StringVar(value='write')
         self.outmode_var = tk.StringVar(value='copy')
         row_frame = ttk.Frame(action_frame)
         row_frame.pack(fill='x', **PADDING)
@@ -386,7 +386,6 @@ class App:
     def _page_extract(self) -> ttk.Frame:
         """任务2：提取书签 / 提取图片"""
         page = ttk.Frame(self._config_host)
-        self.mode = tk.StringVar(value='extract')
         mode_frame = _labelframe(page, '提取内容', 'primary')
         mode_frame.pack(fill='x', **PADDING)
         row_frame = ttk.Frame(mode_frame)
@@ -608,6 +607,11 @@ class App:
         self._nav_guard = True
         try:
             self._current_page = page_number
+            # 按页面设置操作模式
+            if page_number == 1:
+                self.mode.set('write')
+            elif page_number == 2:
+                self.mode.set('extract')
             for page_index, page_frame in self._pages.items():
                 if page_index == page_number:
                     page_frame.pack(fill='x', **PADDING)

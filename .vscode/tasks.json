@@ -1,0 +1,34 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "python: 创建虚拟环境",
+      "type": "shell",
+      "command": "python -m venv .venv",
+      "problemMatcher": []
+    },
+    {
+      "label": "python: 安装开发依赖",
+      "type": "shell",
+      "command": "${config:python.defaultInterpreterPath} -m pip install -r requirements-dev.txt",
+      "dependsOn": "python: 创建虚拟环境",
+      "problemMatcher": []
+    },
+    {
+      "label": "python: 运行测试 (pytest)",
+      "type": "shell",
+      "command": "${config:python.defaultInterpreterPath} -m pytest tests",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "python: 检查 + 格式化 (ruff)",
+      "type": "shell",
+      "command": "${config:python.defaultInterpreterPath} -m ruff check . && ${config:python.defaultInterpreterPath} -m ruff format .",
+      "problemMatcher": []
+    }
+  ]
+}
