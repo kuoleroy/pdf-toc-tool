@@ -28,6 +28,8 @@ OCR 后端为 [RapidOCR](https://github.com/RapidAI/RapidOCR)（PaddleOCR 模型
   （AES-256）另存 `_已加密_密码<密码>.pdf`，文件名自动带密码便于记忆，原文件不变
 - **Word 转 PDF / HTML**：`.docx` 可**免引擎**纯 Python 转换（mammoth + xhtml2pdf，内置中文支持）；
   也可转 HTML 在浏览器查看；`.doc/.rtf` 老格式转 PDF 需安装 Office/WPS（COM）或 LibreOffice（自动检测，优先 COM）
+- **删除 PDF 底部广告**：识别扫描版 PDF 页面底部的文字/图片广告并真正删除（使用 redaction 技术，非覆盖），
+  支持自定义底部高度比例、预览确认后再删除
 
 ## 快速开始
 
@@ -193,11 +195,14 @@ offset（0-based PDF 页索引 − 印刷页码）。
 ```text
 pdf-toc-tool/
 ├── pdf_toc_tool.py        # 入口（无参数=GUI，带参数=CLI）
-├── core.py                # 核心逻辑：txt解析、书签写入/提取
+├── core.py                # 核心逻辑：txt解析、书签写入/提取、删除底部广告
 ├── ebook.py               # 电子书内置目录提取（EPUB/MOBI/AZW3，仅标准库）
 ├── ocr.py                 # OCR（RapidOCR，首次识别自动下载模型）
 ├── gui.py                 # tkinter 图形界面
 ├── cli.py                 # 命令行接口
+├── doc2pdf.py             # Word 转 PDF/HTML（mammoth + xhtml2pdf）
+├── taskmgr.py             # 后台任务管理（进度、暂停、取消）
+├── dlg.py                 # 对话框组件
 └── (构建相关：BUILD.md / LICENSE / requirements.txt 等)
 ```
 
