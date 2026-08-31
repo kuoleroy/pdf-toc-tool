@@ -474,8 +474,10 @@ class App:
         return page
 
     def _page_pdf_tool(self) -> ttk.Frame:
-        """任务4：PDF 解锁 / 加密"""
+        """任务4：PDF 解锁 / 加密 / 去广告"""
         page = ttk.Frame(self._config_host)
+        
+        # 解锁/加密区域
         unlock_frame = _labelframe(page, 'PDF 解锁 / 加密', 'primary')
         unlock_frame.pack(fill='x', **PADDING)
         row_frame = ttk.Frame(unlock_frame)
@@ -493,6 +495,26 @@ class App:
         self.hint(page, '使用"文件"面板中选择的PDF；解锁生成"<名>_已解锁.pdf"；'
                         '加密生成"<名>_已加密_密码<密码>.pdf"（AES-256），原文件不变',
                   wrap=620).pack(anchor='w', **PADDING)
+        
+        # 删除底部广告区域
+        ads_frame = _labelframe(page, '删除底部广告', 'success')
+        ads_frame.pack(fill='x', **PADDING)
+        row_frame = ttk.Frame(ads_frame)
+        row_frame.pack(fill='x', **PADDING)
+        ttk.Label(row_frame, text='底部高度比例:').pack(side='left')
+        self.bottom_ratio_var = tk.StringVar(value='15')
+        ttk.Entry(row_frame, textvariable=self.bottom_ratio_var, width=5).pack(side='left', padx=4)
+        ttk.Label(row_frame, text='%').pack(side='left')
+        self.btn_preview_ads = _btn(row_frame, 'info-outline', text='预览底部内容…',
+                                    command=self.do_preview_ads)
+        self.btn_preview_ads.pack(side='left', padx=8)
+        self.btn_remove_ads = _btn(row_frame, 'success', text='删除底部广告…',
+                                   command=self.do_remove_ads)
+        self.btn_remove_ads.pack(side='left', padx=8)
+        self.hint(page, '识别PDF页面底部指定区域内的文字广告并真正删除（使用redaction技术）；'
+                        '建议先"预览"确认位置，再执行删除；默认底部15%区域',
+                  wrap=620).pack(anchor='w', **PADDING)
+        
         return page
 
     def _page_convert(self) -> ttk.Frame:
@@ -986,6 +1008,12 @@ class App:
             self.logln('加密完成（打开需密码）: %s' % output_path)
             messagebox.showinfo('完成', '已加密并保存:\n%s' % output_path)
             self._open_folder(os.path.dirname(output_path))
+        elif message_kind == 'remove_ads_done':
+            self._task_end()
+            _kind, output_path = message
+            self.logln('底部广告删除完成: %s' % output_path)
+            messagebox.showinfo('完成', '已删除底部广告并保存:\n%s' % output_path)
+            self._open_folder(os.path.dirname(output_path))
         elif message_kind == 'convert_done':
             self._task_end()
             _kind, output_path = message
@@ -1286,6 +1314,94 @@ class App:
                 return
             self.logln('正在加密PDF（后台）…')
             self._task_start('encrypt', core._mp_encrypt_pdf, (pdf_path, password, save_path))
+        except Exception as error:
+            self.logln('错误: %s' % error)
+            messagebox.showerror('错误', str(error))
+
+    def do_preview_ads(self) -> None:
+        """任务4·预览底部广告：显示指定页面底部区域的文字内容"""
+        try:
+            pdf_path = self.pdf_var.get().strip()
+            if not pdf_path:
+                raise ValueError('请先选择PDF文件')
+            if not os.path.isfile(pdf_path):
+                raise ValueError('PDF文件不存在: %s' % pdf_path)
+            
+            # 获取底部比例
+            ratio_str = self.bottom_ratio_var.get().strip()
+            if not ratio_str:
+                raise ValueError('请输入底部高度比例')
+            try:
+                ratio = float(ratio_str) / 100.0
+            except ValueError:
+                raise ValueError('比例必须是数字')
+            
+            if ratio < 0.05 or ratio > 0.5:
+                raise ValueError('比例范围: 5%-50%')
+            
+            # 询问预览页码
+            from tkinter import simpledialog
+            page_num = simpledialog.askinteger(
+                '预览页码', '请输入要预览的页码:', initialvalue=1, minvalue=1)
+            if not page_num:
+                return
+            
+            self.logln('正在预览第 %d 页底部内容…' % page_num)
+            
+            # 获取预览结果
+            results = core.preview_bottom_ads(pdf_path, ratio, page_num)
+            
+            if not results:
+                self.logln('该页面底部未检测到文字内容')
+                return
+            
+            self.logln('底部检测到 %d 处文字:' % len(results))
+            for item in results:
+                text = item['text']
+                size = item['size']
+                bbox = item['bbox']
+                self.logln('  [%s] 字号%.1f y=%.0f-%.0f' % 
+                          (text, size, bbox[1], bbox[3]))
+            
+            self.logln('提示：确认无误后可点击"删除底部广告"执行删除')
+            
+        except Exception as error:
+            self.logln('错误: %s' % error)
+            messagebox.showerror('错误', str(error))
+
+    def do_remove_ads(self) -> None:
+        """任务4·删除底部广告：识别并真正删除PDF底部区域的广告文字"""
+        try:
+            pdf_path = self.pdf_var.get().strip()
+            if not pdf_path:
+                raise ValueError('请先选择PDF文件')
+            if not os.path.isfile(pdf_path):
+                raise ValueError('PDF文件不存在: %s' % pdf_path)
+            
+            # 获取底部比例
+            ratio_str = self.bottom_ratio_var.get().strip()
+            if not ratio_str:
+                raise ValueError('请输入底部高度比例')
+            try:
+                ratio = float(ratio_str) / 100.0
+            except ValueError:
+                raise ValueError('比例必须是数字')
+            
+            if ratio < 0.05 or ratio > 0.5:
+                raise ValueError('比例范围: 5%-50%')
+            
+            # 确认操作
+            if not messagebox.askyesno(
+                    '确认删除',
+                    '将删除PDF底部 %.0f%% 区域内的所有文字内容！\n\n'
+                    '建议先"预览"确认位置。\n\n是否继续？' % (ratio * 100)):
+                self.logln('已取消删除操作')
+                return
+            
+            self.logln('正在删除底部广告（后台）…')
+            self._task_start('remove_ads', core._mp_remove_bottom_ads,
+                           (pdf_path, ratio))
+            
         except Exception as error:
             self.logln('错误: %s' % error)
             messagebox.showerror('错误', str(error))

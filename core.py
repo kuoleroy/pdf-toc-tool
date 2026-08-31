@@ -18,7 +18,7 @@ import struct
 import tempfile
 import time
 import zipfile
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import fitz
 
@@ -147,6 +147,20 @@ def _mp_unlock_pdf(q, pdf_path, password, output_path) -> None:
     try:
         unlock_pdf(pdf_path, password, output_path)
         q.put(('unlock_done', output_path))
+    except Exception as error:
+        q.put(('error', type(error).__name__ + ': ' + str(error)))
+
+
+def _mp_remove_bottom_ads(q, pdf_path, bottom_ratio) -> None:
+    """子进程入口：删除底部广告 -> ('remove_ads_done', output_path)"""
+    try:
+        def progress_callback(current, total, msg):
+            q.put(('progress', current, total, msg))
+        
+        output_path = remove_bottom_ads(
+            pdf_path, bottom_ratio, 
+            out_mode='copy', progress=progress_callback)
+        q.put(('remove_ads_done', output_path))
     except Exception as error:
         q.put(('error', type(error).__name__ + ': ' + str(error)))
 
@@ -681,3 +695,136 @@ def export_toc_txt(toc: List[List], out_path: str, with_pdf_page: bool = True) -
                 file_handle.write('%s%s [p%d]\n' % (indent_text, title, page))
             else:
                 file_handle.write('%s%s\n' % (indent_text, title))
+
+
+def remove_bottom_ads(pdf_path: str, bottom_ratio: float = 0.15,
+                      page_range: Optional[Tuple[int, int]] = None,
+                      out_mode: str = 'copy',
+                      progress: Optional[Callable] = None,
+                      cancel_event=None, pause_event=None) -> str:
+    """删除PDF底部广告文字：识别底部区域的文字并用redaction真正删除。
+    
+    Args:
+        pdf_path: PDF文件路径
+        bottom_ratio: 底部区域高度比例（0.05-0.5），默认0.15即底部15%
+        page_range: 页码范围(起始, 结束)，None表示全部页面
+        out_mode: 'copy'生成副本，'same'覆盖原文件
+        progress: 进度回调函数 (当前页, 总页数, 提示文字)
+        cancel_event: 取消事件
+        pause_event: 暂停事件
+    
+    Returns:
+        输出文件路径
+    """
+    if not os.path.isfile(pdf_path):
+        raise ValueError('PDF文件不存在: %s' % pdf_path)
+    
+    # 限制比例范围
+    bottom_ratio = max(0.05, min(0.5, bottom_ratio))
+    
+    # 确定输出路径
+    if out_mode == 'same':
+        output_path = pdf_path
+    else:
+        base, ext = os.path.splitext(pdf_path)
+        output_path = base + '_去广告' + ext
+    
+    doc = fitz.open(pdf_path)
+    total_pages = len(doc)
+    
+    # 确定处理范围
+    if page_range:
+        start_page = max(1, page_range[0])
+        end_page = min(total_pages, page_range[1])
+    else:
+        start_page = 1
+        end_page = total_pages
+    
+    removed_count = 0
+    
+    for page_num in range(start_page, end_page + 1):
+        check_task(cancel_event, pause_event)
+        
+        page = doc[page_num - 1]  # fitz 使用0-based索引
+        page_height = page.rect.height
+        bottom_y = page_height * (1 - bottom_ratio)  # 底部区域起始y坐标
+        
+        # 获取页面所有文字块
+        blocks = page.get_text('dict')['blocks']
+        
+        page_removed = 0
+        for block in blocks:
+            if block['type'] != 0:  # 只处理文字块
+                continue
+            for line in block['lines']:
+                for span in line['spans']:
+                    bbox = span['bbox']
+                    # 检查是否在底部区域
+                    if bbox[1] >= bottom_y:
+                        # 添加 redaction annotation
+                        rect = fitz.Rect(bbox)
+                        page.add_redact_annot(rect, fill=(1, 1, 1))  # 白色填充
+                        page_removed += 1
+        
+        # 应用 redactions，真正删除内容
+        if page_removed > 0:
+            page.apply_redactions()
+            removed_count += page_removed
+        
+        if progress:
+            progress(page_num - start_page + 1, end_page - start_page + 1,
+                     '处理第 %d/%d 页，已删除 %d 处广告' % (page_num, total_pages, removed_count))
+    
+    # 保存文件
+    if out_mode == 'same':
+        doc.save(pdf_path, incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+    else:
+        doc.save(output_path)
+    doc.close()
+    
+    return output_path
+
+
+def preview_bottom_ads(pdf_path: str, bottom_ratio: float = 0.15,
+                       page_num: int = 1) -> List[Dict]:
+    """预览PDF底部广告：返回指定页面底部区域的文字信息。
+    
+    Returns:
+        列表，每项包含 text, bbox, font_size 等信息
+    """
+    if not os.path.isfile(pdf_path):
+        raise ValueError('PDF文件不存在: %s' % pdf_path)
+    
+    bottom_ratio = max(0.05, min(0.5, bottom_ratio))
+    
+    doc = fitz.open(pdf_path)
+    total_pages = len(doc)
+    
+    if page_num < 1 or page_num > total_pages:
+        doc.close()
+        raise ValueError('页码超出范围: 1-%d' % total_pages)
+    
+    page = doc[page_num - 1]
+    page_height = page.rect.height
+    bottom_y = page_height * (1 - bottom_ratio)
+    
+    result = []
+    blocks = page.get_text('dict')['blocks']
+    
+    for block in blocks:
+        if block['type'] != 0:
+            continue
+        for line in block['lines']:
+            for span in line['spans']:
+                bbox = span['bbox']
+                if bbox[1] >= bottom_y:
+                    result.append({
+                        'text': span['text'],
+                        'bbox': bbox,
+                        'font': span['font'],
+                        'size': span['size'],
+                        'color': span['color']
+                    })
+    
+    doc.close()
+    return result
