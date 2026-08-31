@@ -1161,21 +1161,34 @@ class App:
 
     def do_write(self) -> None:
         """任务1·写入书签：解析目录txt为书签条目（需计算印刷页码→PDF页号偏移，
-        但 txt 内已含[pN]则跳过偏移），确认后后台写入副本或原文件"""
+        但 txt 内已含[pN]则跳过偏移），确认后后台写入副本或原文件。
+        优先使用目录txt，若txt为空或未选择则使用OCR结果页签内容。"""
         pdf_path = self.pdf_var.get().strip()
         txt_path = self.txt_var.get().strip()
-        if not pdf_path or not txt_path:
-            raise ValueError('请选择PDF文件和目录txt')
+        if not pdf_path:
+            raise ValueError('请选择PDF文件')
         if not os.path.isfile(pdf_path):
             raise ValueError('PDF文件不存在: %s' % pdf_path)
-        if not os.path.isfile(txt_path):
-            raise ValueError('txt文件不存在: %s' % txt_path)
+        
+        txt_content = ''
+        # 优先读取目录txt文件
+        if txt_path and os.path.isfile(txt_path):
+            try:
+                with open(txt_path, encoding='utf-8-sig') as file_handle:
+                    txt_content = file_handle.read().strip()
+            except OSError as io_error:
+                raise ValueError('读取txt失败: %s' % io_error)
+        
+        # 若txt为空，则使用OCR结果页签的内容
+        if not txt_content:
+            ocr_content = self.ocr_text.get('1.0', 'end').strip()
+            if ocr_content:
+                txt_content = ocr_content
+                self.logln('目录txt为空，使用OCR结果作为目录来源')
+            else:
+                raise ValueError('目录txt和OCR结果都为空，请先导入目录内容')
+        
         offset = 0
-        try:
-            with open(txt_path, encoding='utf-8-sig') as file_handle:
-                txt_content = file_handle.read()
-        except OSError as io_error:
-            raise ValueError('读取txt失败: %s' % io_error)
         # 已含 [pN] 直写PDF页号时无需偏移；否则必须由"正文第一页"两框计算偏移
         if not RE_OCR_PDF_PAGE.search(txt_content):
             offset = self._field_offset()
@@ -1185,6 +1198,17 @@ class App:
                     text='写书签必填：PDF页号和印刷页码')
                 self.root.after(5000, lambda: self.ocr_offset_error_label.configure(text=''))
                 return
+        
+        # 将内容写入临时文件供 parse_toc 使用
+        if not txt_path or not os.path.isfile(txt_path):
+            import tempfile
+            tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False,
+                                             encoding='utf-8')
+            tmp.write(txt_content)
+            tmp.close()
+            txt_path = tmp.name
+            self.logln('使用OCR结果写入书签')
+        
         parsed_entries = core.levels_from_indent(core.parse_toc(txt_path))
         toc_entries = core.build_toc(parsed_entries, offset)
         self.logln('解析完成: %d 条书签（偏移=%d）' % (len(toc_entries), offset))
