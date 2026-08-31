@@ -432,3 +432,161 @@ def _parse_ncx(file_bytes: bytes) -> List[Tuple[int, str, int]]:
     if not toc_entries:
         raise ValueError('目录（navMap）为空')
     return toc_entries
+
+
+# ---- EPUB 合并 ----
+
+def merge_epubs(epub_paths: List[str], output_path: str,
+                title: str = '', author: str = '') -> str:
+    """将多本EPUB合并为一本，自动生成合并目录。
+    
+    Args:
+        epub_paths: EPUB文件路径列表（按顺序合并）
+        output_path: 输出EPUB文件路径
+        title: 合并后的书名，默认取第一本的书名
+        author: 合并后的作者，默认取第一本的作者
+    
+    Returns:
+        输出文件路径
+    """
+    try:
+        import ebooklib
+        from ebooklib import epub
+    except ImportError:
+        raise ImportError('需要安装ebooklib库: pip install ebooklib')
+    
+    if not epub_paths:
+        raise ValueError('请至少选择一本EPUB')
+    
+    for path in epub_paths:
+        if not os.path.isfile(path):
+            raise ValueError('文件不存在: %s' % path)
+        if not path.lower().endswith('.epub'):
+            raise ValueError('不是EPUB文件: %s' % path)
+    
+    # 读取第一本作为基础
+    first_book = epub.read_epub(epub_paths[0], options={'ignore_ncx': True})
+    
+    # 获取元数据
+    if not title:
+        title = first_book.get_metadata('DC', 'title')
+        title = title[0][0] if title else os.path.splitext(os.path.basename(epub_paths[0]))[0]
+    
+    if not author:
+        author = first_book.get_metadata('DC', 'creator')
+        author = author[0][0] if author else '未知作者'
+    
+    # 创建新书
+    merged_book = epub.EpubBook()
+    merged_book.set_identifier('merged_%d' % int(__import__('time').time()))
+    merged_book.set_title(title)
+    merged_book.set_language('zh')
+    merged_book.add_author(author)
+    
+    # 用于跟踪已添加的资源（避免重复）
+    added_items = {}
+    spine_items = ['nav']
+    toc_items = []
+    item_id_counter = 0
+    
+    def process_book(book_path, book_index):
+        """处理单本EPUB，将内容添加到合并后的书中"""
+        nonlocal item_id_counter
+        
+        try:
+            book = epub.read_epub(book_path, options={'ignore_ncx': True})
+        except Exception as e:
+            raise ValueError('无法打开EPUB: %s - %s' % (book_path, str(e)))
+        
+        # 获取书名用于目录
+        book_title = book.get_metadata('DC', 'title')
+        book_title = book_title[0][0] if book_title else os.path.basename(book_path)
+        
+        # 添加章节分隔页（作为目录项）
+        chapter_id = 'chapter_%d' % book_index
+        separator = epub.EpubHtml(
+            title=book_title,
+            file_name='chapter_%d.xhtml' % book_index,
+            lang='zh'
+        )
+        separator.content = '<h1>%s</h1><hr/>' % book_title
+        merged_book.add_item(separator)
+        spine_items.append(separator)
+        
+        # 收集这本书的目录
+        book_toc = []
+        
+        # 处理所有项目
+        for item in book.get_items():
+            item_id_counter += 1
+            item_name = item.get_name()
+            
+            # 处理内容文档（XHTML/HTML）
+            if item.get_type() == ebooklib.ITEM_DOCUMENT:
+                # 重命名文件以避免冲突
+                new_name = 'book%d_%s' % (book_index, item_name)
+                
+                # 创建新项目
+                new_item = epub.EpubHtml(
+                    title=item_name,
+                    file_name=new_name,
+                    lang='zh'
+                )
+                new_item.content = item.get_content()
+                
+                # 复制属性
+                if hasattr(item, 'properties'):
+                    new_item.properties = item.properties
+                
+                merged_book.add_item(new_item)
+                spine_items.append(new_item)
+                book_toc.append((new_item, []))
+                
+            # 处理图片
+            elif item.get_type() == ebooklib.ITEM_IMAGE:
+                new_name = 'book%d_%s' % (book_index, item_name)
+                if new_name not in added_items:
+                    img = epub.EpubImage(
+                        uid='img_%d' % item_id_counter,
+                        file_name=new_name,
+                        media_type=item.get_media_type(),
+                        content=item.get_content()
+                    )
+                    merged_book.add_item(img)
+                    added_items[new_name] = img
+                    
+            # 处理CSS
+            elif item.get_type() == ebooklib.ITEM_STYLE:
+                new_name = 'book%d_%s' % (book_index, item_name)
+                if new_name not in added_items:
+                    css = epub.EpubItem(
+                        uid='style_%d' % item_id_counter,
+                        file_name=new_name,
+                        media_type=item.get_media_type(),
+                        content=item.get_content()
+                    )
+                    merged_book.add_item(css)
+                    added_items[new_name] = css
+        
+        # 为这本书的目录添加一个分组
+        if book_toc:
+            toc_items.append((epub.Section(book_title), [t[0] for t in book_toc]))
+    
+    # 处理所有EPUB
+    for i, path in enumerate(epub_paths):
+        process_book(path, i)
+    
+    # 设置目录
+    merged_book.toc = toc_items
+    
+    # 添加默认NCX和Nav
+    merged_book.add_item(epub.EpubNcx())
+    merged_book.add_item(epub.EpubNav())
+    
+    # 设置spine
+    merged_book.spine = spine_items
+    
+    # 写入文件
+    epub.write_epub(output_path, merged_book, {})
+    
+    return output_path

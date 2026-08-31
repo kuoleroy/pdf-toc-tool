@@ -1,3 +1,4 @@
 PyMuPDF>=1.24
 numpy>=1.26
 rapidocr-onnxruntime>=1.2
+ebooklib>=0.18

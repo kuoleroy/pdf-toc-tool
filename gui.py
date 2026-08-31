@@ -52,7 +52,7 @@ LIGHT_THEME = 'cosmo'              # 亮色主题
 THEME_CHOICES = (DEFAULT_THEME, LIGHT_THEME)
 
 # 左侧导航任务（仿 opencode 面板导航）
-NAV_ITEMS = ('写入书签', '提取目录/图片', 'OCR 识别', 'PDF 解锁/加密', 'Word 转换')
+NAV_ITEMS = ('写入书签', '提取目录/图片', 'OCR 识别', 'PDF 工具', 'Word 转换', 'EPUB 合并')
 
 # 状态栏配色（固定深色，不随主题变化，仿 opencode 顶栏）
 SB_BG = '#1e1f24'
@@ -320,6 +320,7 @@ class App:
             3: self._page_ocr(),
             4: self._page_pdf_tool(),
             5: self._page_convert(),
+            6: self._page_epub_merge(),
         }
 
         # 预览 / 日志（共享）
@@ -531,6 +532,65 @@ class App:
         self.btn_convert_html.pack(side='left', padx=8)
         self.hint(page, '把 .docx 转为PDF/HTML（纯Python免安装引擎）；'
                         '.doc/.rtf 老格式转PDF需安装 Office/WPS 或 LibreOffice；原文件不变',
+                  wrap=620).pack(anchor='w', **PADDING)
+        return page
+
+    def _page_epub_merge(self) -> ttk.Frame:
+        """任务6：EPUB 合并"""
+        page = ttk.Frame(self._config_host)
+        merge_frame = _labelframe(page, 'EPUB 合并', 'primary')
+        merge_frame.pack(fill='x', **PADDING)
+        
+        # 文件列表
+        list_frame = ttk.Frame(merge_frame)
+        list_frame.pack(fill='x', **PADDING)
+        ttk.Label(list_frame, text='EPUB文件列表:').pack(anchor='w')
+        
+        # 文件列表框和滚动条
+        list_container = ttk.Frame(list_frame)
+        list_container.pack(fill='x', pady=(4, 0))
+        
+        scrollbar = ttk.Scrollbar(list_container)
+        scrollbar.pack(side='right', fill='y')
+        
+        self.epub_list = tk.Listbox(list_container, height=4, yscrollcommand=scrollbar.set,
+                                    selectmode='extended')
+        self.epub_list.pack(side='left', fill='x', expand=True)
+        scrollbar.config(command=self.epub_list.yview)
+        
+        # 按钮区域
+        btn_frame = ttk.Frame(list_frame)
+        btn_frame.pack(fill='x', pady=(4, 0))
+        _btn(btn_frame, 'primary-outline', text='添加EPUB…', command=self._add_epub_files).pack(side='left', padx=4)
+        _btn(btn_frame, 'danger-outline', text='移除选中', command=self._remove_epub_files).pack(side='left', padx=4)
+        _btn(btn_frame, 'secondary-outline', text='上移', command=lambda: self._move_epub(-1)).pack(side='left', padx=4)
+        _btn(btn_frame, 'secondary-outline', text='下移', command=lambda: self._move_epub(1)).pack(side='left', padx=4)
+        
+        # 合并选项
+        option_frame = _labelframe(page, '合并选项', 'primary')
+        option_frame.pack(fill='x', **PADDING)
+        
+        row_frame = ttk.Frame(option_frame)
+        row_frame.pack(fill='x', **PADDING)
+        ttk.Label(row_frame, text='合并后书名:').pack(side='left')
+        self.merge_title_var = tk.StringVar()
+        ttk.Entry(row_frame, textvariable=self.merge_title_var, width=30).pack(side='left', padx=4)
+        ttk.Label(row_frame, text='（留空取第一本书名）').pack(side='left')
+        
+        row_frame = ttk.Frame(option_frame)
+        row_frame.pack(fill='x', **PADDING)
+        ttk.Label(row_frame, text='合并后作者:').pack(side='left')
+        self.merge_author_var = tk.StringVar()
+        ttk.Entry(row_frame, textvariable=self.merge_author_var, width=30).pack(side='left', padx=4)
+        ttk.Label(row_frame, text='（留空取第一本书作者）').pack(side='left')
+        
+        # 执行按钮
+        action_frame = ttk.Frame(page)
+        action_frame.pack(fill='x', **PADDING)
+        _btn(action_frame, 'primary', text='开始合并…', command=self.do_epub_merge).pack(side='left', padx=8)
+        
+        self.hint(page, '将多本EPUB电子书合并为一本；自动为每本书添加分隔页和目录；'
+                        '支持EPUB2/EPUB3格式',
                   wrap=620).pack(anchor='w', **PADDING)
         return page
 
@@ -1469,6 +1529,73 @@ class App:
                 return
             self.logln('正在转换Word为HTML（后台）…')
             self._task_start('convert', doc2pdf._mp_doc_to_html, (source_path, save_path))
+        except Exception as error:
+            self.logln('错误: %s' % error)
+            messagebox.showerror('错误', str(error))
+
+    def _add_epub_files(self) -> None:
+        """添加EPUB文件到合并列表"""
+        files = filedialog.askopenfilenames(
+            title='选择要合并的EPUB文件',
+            filetypes=[('EPUB电子书', '*.epub'), ('全部', '*.*')])
+        for f in files:
+            if f not in self.epub_list.get(0, 'end'):
+                self.epub_list.insert('end', f)
+
+    def _remove_epub_files(self) -> None:
+        """从合并列表移除选中的文件"""
+        selected = self.epub_list.curselection()
+        for i in reversed(selected):
+            self.epub_list.delete(i)
+
+    def _move_epub(self, direction: int) -> None:
+        """在合并列表中上移/下移选中的文件"""
+        selected = self.epub_list.curselection()
+        if not selected:
+            return
+        idx = selected[0]
+        new_idx = idx + direction
+        if 0 <= new_idx < self.epub_list.size():
+            item = self.epub_list.get(idx)
+            self.epub_list.delete(idx)
+            self.epub_list.insert(new_idx, item)
+            self.epub_list.selection_set(new_idx)
+
+    def do_epub_merge(self) -> None:
+        """任务6·EPUB合并：将列表中的多本EPUB合并为一本"""
+        try:
+            # 获取文件列表
+            epub_files = list(self.epub_list.get(0, 'end'))
+            if len(epub_files) < 2:
+                raise ValueError('请至少添加2本EPUB文件')
+            
+            # 获取合并选项
+            title = self.merge_title_var.get().strip()
+            author = self.merge_author_var.get().strip()
+            
+            # 选择保存路径
+            save_path = filedialog.asksaveasfilename(
+                title='另存为（合并后的EPUB）',
+                defaultextension='.epub',
+                initialdir=os.path.dirname(epub_files[0]) or None,
+                initialfile='合并电子书.epub',
+                filetypes=[('EPUB电子书', '*.epub')])
+            if not save_path:
+                self.logln('已取消：未选择保存路径')
+                return
+            
+            self.logln('开始合并 %d 本EPUB…' % len(epub_files))
+            for i, f in enumerate(epub_files, 1):
+                self.logln('  %d. %s' % (i, os.path.basename(f)))
+            
+            # 使用ebooklib合并
+            import ebook
+            output = ebook.merge_epubs(epub_files, save_path, title, author)
+            
+            self.logln('合并完成！输出文件: %s' % output)
+            messagebox.showinfo('完成', '已成功合并 %d 本EPUB:\n%s' % (len(epub_files), output))
+            self._open_folder(os.path.dirname(output))
+            
         except Exception as error:
             self.logln('错误: %s' % error)
             messagebox.showerror('错误', str(error))

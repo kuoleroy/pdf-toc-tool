@@ -30,6 +30,7 @@ OCR 后端为 [RapidOCR](https://github.com/RapidAI/RapidOCR)（PaddleOCR 模型
   也可转 HTML 在浏览器查看；`.doc/.rtf` 老格式转 PDF 需安装 Office/WPS（COM）或 LibreOffice（自动检测，优先 COM）
 - **删除 PDF 底部广告**：识别扫描版 PDF 页面底部的文字/图片广告并真正删除（使用 redaction 技术，非覆盖），
   支持自定义底部高度比例、预览确认后再删除
+- **EPUB 合并**：将多本 EPUB 电子书合并为一本，自动为每本书添加分隔页和目录，支持 EPUB2/EPUB3 格式
 
 ## 快速开始
 
