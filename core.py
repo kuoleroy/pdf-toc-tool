@@ -749,22 +749,34 @@ def remove_bottom_ads(pdf_path: str, bottom_ratio: float = 0.15,
         page_height = page.rect.height
         bottom_y = page_height * (1 - bottom_ratio)  # 底部区域起始y坐标
         
-        # 获取页面所有文字块
+        # 获取页面所有内容块（文字和图片）
         blocks = page.get_text('dict')['blocks']
         
         page_removed = 0
         for block in blocks:
-            if block['type'] != 0:  # 只处理文字块
+            bbox = block.get('bbox')
+            if not bbox:
                 continue
-            for line in block['lines']:
-                for span in line['spans']:
-                    bbox = span['bbox']
-                    # 检查是否在底部区域
-                    if bbox[1] >= bottom_y:
-                        # 添加 redaction annotation
-                        rect = fitz.Rect(bbox)
-                        page.add_redact_annot(rect, fill=(1, 1, 1))  # 白色填充
-                        page_removed += 1
+            
+            # 检查是否在底部区域
+            if bbox[1] < bottom_y:
+                continue
+            
+            # 处理文字块 (type=0)
+            if block['type'] == 0:
+                for line in block['lines']:
+                    for span in line['spans']:
+                        span_bbox = span['bbox']
+                        if span_bbox[1] >= bottom_y:
+                            rect = fitz.Rect(span_bbox)
+                            page.add_redact_annot(rect, fill=(1, 1, 1))
+                            page_removed += 1
+            
+            # 处理图片块 (type=1)
+            elif block['type'] == 1:
+                rect = fitz.Rect(bbox)
+                page.add_redact_annot(rect, fill=(1, 1, 1))
+                page_removed += 1
         
         # 应用 redactions，真正删除内容
         if page_removed > 0:
@@ -812,19 +824,34 @@ def preview_bottom_ads(pdf_path: str, bottom_ratio: float = 0.15,
     blocks = page.get_text('dict')['blocks']
     
     for block in blocks:
-        if block['type'] != 0:
+        bbox = block.get('bbox')
+        if not bbox or bbox[1] < bottom_y:
             continue
-        for line in block['lines']:
-            for span in line['spans']:
-                bbox = span['bbox']
-                if bbox[1] >= bottom_y:
-                    result.append({
-                        'text': span['text'],
-                        'bbox': bbox,
-                        'font': span['font'],
-                        'size': span['size'],
-                        'color': span['color']
-                    })
+        
+        # 文字块
+        if block['type'] == 0:
+            for line in block['lines']:
+                for span in line['spans']:
+                    span_bbox = span['bbox']
+                    if span_bbox[1] >= bottom_y:
+                        result.append({
+                            'type': 'text',
+                            'text': span['text'],
+                            'bbox': span_bbox,
+                            'font': span['font'],
+                            'size': span['size'],
+                            'color': span['color']
+                        })
+        
+        # 图片块
+        elif block['type'] == 1:
+            result.append({
+                'type': 'image',
+                'text': '[图片]',
+                'bbox': bbox,
+                'width': block.get('width', 0),
+                'height': block.get('height', 0)
+            })
     
     doc.close()
     return result

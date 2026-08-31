@@ -1352,16 +1352,30 @@ class App:
             results = core.preview_bottom_ads(pdf_path, ratio, page_num)
             
             if not results:
-                self.logln('该页面底部未检测到文字内容')
+                self.logln('该页面底部未检测到内容')
                 return
             
-            self.logln('底部检测到 %d 处文字:' % len(results))
+            text_count = sum(1 for item in results if item['type'] == 'text')
+            image_count = sum(1 for item in results if item['type'] == 'image')
+            
+            if text_count > 0 and image_count > 0:
+                self.logln('底部检测到 %d 处文字 + %d 处图片:' % (text_count, image_count))
+            elif text_count > 0:
+                self.logln('底部检测到 %d 处文字:' % text_count)
+            else:
+                self.logln('底部检测到 %d 处图片:' % image_count)
+            
             for item in results:
                 text = item['text']
-                size = item['size']
                 bbox = item['bbox']
-                self.logln('  [%s] 字号%.1f y=%.0f-%.0f' % 
-                          (text, size, bbox[1], bbox[3]))
+                if item['type'] == 'text':
+                    size = item['size']
+                    self.logln('  [文字] %s 字号%.1f y=%.0f-%.0f' % 
+                              (text, size, bbox[1], bbox[3]))
+                else:
+                    self.logln('  [图片] %s 尺寸%.0fx%.0f y=%.0f-%.0f' % 
+                              (text, item.get('width', 0), item.get('height', 0), 
+                               bbox[1], bbox[3]))
             
             self.logln('提示：确认无误后可点击"删除底部广告"执行删除')
             
