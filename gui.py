@@ -500,20 +500,64 @@ class App:
         # 删除底部广告区域
         ads_frame = _labelframe(page, '删除底部广告', 'success')
         ads_frame.pack(fill='x', **PADDING)
+        
+        # 文件选择模式
+        mode_frame = ttk.Frame(ads_frame)
+        mode_frame.pack(fill='x', **PADDING)
+        self.ads_mode_var = tk.StringVar(value='single')
+        ttk.Radiobutton(mode_frame, text='单个文件', variable=self.ads_mode_var,
+                        value='single', command=self._toggle_ads_mode).pack(side='left', padx=8)
+        ttk.Radiobutton(mode_frame, text='批量处理', variable=self.ads_mode_var,
+                        value='batch', command=self._toggle_ads_mode).pack(side='left', padx=8)
+        
+        # 单个文件选择
+        self.single_ads_frame = ttk.Frame(ads_frame)
+        self.single_ads_frame.pack(fill='x', **PADDING)
+        self.btn_browse_ads = _btn(self.single_ads_frame, 'primary-outline', text='选择PDF…',
+                                   command=lambda: self.browse(self.pdf_var, '选择PDF', 
+                                                              [('PDF', '*.pdf')]))
+        self.btn_browse_ads.pack(side='left', padx=4)
+        
+        # 批量文件选择
+        self.batch_ads_frame = ttk.Frame(ads_frame)
+        self.batch_ads_frame.pack(fill='x', **PADDING)
+        self.batch_ads_frame.pack_forget()  # 默认隐藏
+        
+        list_container = ttk.Frame(self.batch_ads_frame)
+        list_container.pack(fill='x')
+        scrollbar = ttk.Scrollbar(list_container)
+        scrollbar.pack(side='right', fill='y')
+        self.batch_pdf_list = tk.Listbox(list_container, height=3, yscrollcommand=scrollbar.set,
+                                         selectmode='extended')
+        self.batch_pdf_list.pack(side='left', fill='x', expand=True)
+        scrollbar.config(command=self.batch_pdf_list.yview)
+        
+        batch_btn_frame = ttk.Frame(self.batch_ads_frame)
+        batch_btn_frame.pack(fill='x', pady=(4, 0))
+        _btn(batch_btn_frame, 'primary-outline', text='添加PDF…', command=self._add_batch_pdf).pack(side='left', padx=4)
+        _btn(batch_btn_frame, 'danger-outline', text='移除选中', command=self._remove_batch_pdf).pack(side='left', padx=4)
+        _btn(batch_btn_frame, 'secondary-outline', text='清空列表', command=lambda: self.batch_pdf_list.delete(0, 'end')).pack(side='left', padx=4)
+        
+        # 底部比例设置
         row_frame = ttk.Frame(ads_frame)
         row_frame.pack(fill='x', **PADDING)
         ttk.Label(row_frame, text='底部高度比例:').pack(side='left')
         self.bottom_ratio_var = tk.StringVar(value='15')
         ttk.Entry(row_frame, textvariable=self.bottom_ratio_var, width=5).pack(side='left', padx=4)
         ttk.Label(row_frame, text='%').pack(side='left')
-        self.btn_preview_ads = _btn(row_frame, 'info-outline', text='预览底部内容…',
+        
+        # 操作按钮
+        btn_frame = ttk.Frame(ads_frame)
+        btn_frame.pack(fill='x', **PADDING)
+        self.btn_preview_ads = _btn(btn_frame, 'info-outline', text='预览底部内容…',
                                     command=self.do_preview_ads)
-        self.btn_preview_ads.pack(side='left', padx=8)
-        self.btn_remove_ads = _btn(row_frame, 'success', text='删除底部广告…',
+        self.btn_preview_ads.pack(side='left', padx=4)
+        self.btn_remove_ads = _btn(btn_frame, 'success', text='删除底部广告…',
                                    command=self.do_remove_ads)
-        self.btn_remove_ads.pack(side='left', padx=8)
-        self.hint(page, '识别PDF页面底部指定区域内的文字广告并真正删除（使用redaction技术）；'
-                        '建议先"预览"确认位置，再执行删除；默认底部15%区域',
+        self.btn_remove_ads.pack(side='left', padx=4)
+        
+        self.hint(page, '识别PDF页面底部指定区域内的文字/图片广告并真正删除（使用redaction技术）；'
+                        '建议先"预览"确认位置，再执行删除；默认底部15%区域；支持批量处理多个文件',
                   wrap=620).pack(anchor='w', **PADDING)
         
         return page
@@ -1378,6 +1422,30 @@ class App:
             self.logln('错误: %s' % error)
             messagebox.showerror('错误', str(error))
 
+    def _toggle_ads_mode(self) -> None:
+        """切换单个/批量广告删除模式"""
+        if self.ads_mode_var.get() == 'single':
+            self.single_ads_frame.pack(fill='x', **PADDING)
+            self.batch_ads_frame.pack_forget()
+        else:
+            self.single_ads_frame.pack_forget()
+            self.batch_ads_frame.pack(fill='x', **PADDING)
+
+    def _add_batch_pdf(self) -> None:
+        """添加PDF文件到批量处理列表"""
+        files = filedialog.askopenfilenames(
+            title='选择要处理的PDF文件',
+            filetypes=[('PDF文件', '*.pdf'), ('全部', '*.*')])
+        for f in files:
+            if f not in self.batch_pdf_list.get(0, 'end'):
+                self.batch_pdf_list.insert('end', f)
+
+    def _remove_batch_pdf(self) -> None:
+        """从批量处理列表移除选中的文件"""
+        selected = self.batch_pdf_list.curselection()
+        for i in reversed(selected):
+            self.batch_pdf_list.delete(i)
+
     def do_preview_ads(self) -> None:
         """任务4·预览底部广告：显示指定页面底部区域的文字内容"""
         try:
@@ -1444,14 +1512,8 @@ class App:
             messagebox.showerror('错误', str(error))
 
     def do_remove_ads(self) -> None:
-        """任务4·删除底部广告：识别并真正删除PDF底部区域的广告文字"""
+        """任务4·删除底部广告：识别并真正删除PDF底部区域的广告文字，支持批量处理"""
         try:
-            pdf_path = self.pdf_var.get().strip()
-            if not pdf_path:
-                raise ValueError('请先选择PDF文件')
-            if not os.path.isfile(pdf_path):
-                raise ValueError('PDF文件不存在: %s' % pdf_path)
-            
             # 获取底部比例
             ratio_str = self.bottom_ratio_var.get().strip()
             if not ratio_str:
@@ -1464,21 +1526,74 @@ class App:
             if ratio < 0.05 or ratio > 0.5:
                 raise ValueError('比例范围: 5%-50%')
             
+            # 获取文件列表
+            if self.ads_mode_var.get() == 'single':
+                pdf_path = self.pdf_var.get().strip()
+                if not pdf_path:
+                    raise ValueError('请先选择PDF文件')
+                if not os.path.isfile(pdf_path):
+                    raise ValueError('PDF文件不存在: %s' % pdf_path)
+                pdf_files = [pdf_path]
+            else:
+                pdf_files = list(self.batch_pdf_list.get(0, 'end'))
+                if not pdf_files:
+                    raise ValueError('请先添加PDF文件到列表')
+            
             # 确认操作
-            if not messagebox.askyesno(
-                    '确认删除',
-                    '将删除PDF底部 %.0f%% 区域内的所有文字内容！\n\n'
-                    '建议先"预览"确认位置。\n\n是否继续？' % (ratio * 100)):
+            if len(pdf_files) == 1:
+                msg = '将删除PDF底部 %.0f%% 区域内的所有文字/图片内容！\n\n' \
+                      '建议先"预览"确认位置。\n\n是否继续？' % (ratio * 100)
+            else:
+                msg = '将批量处理 %d 个PDF文件，删除底部 %.0f%% 区域内的所有文字/图片内容！\n\n' \
+                      '建议先"预览"确认位置。\n\n是否继续？' % (len(pdf_files), ratio * 100)
+            
+            if not messagebox.askyesno('确认删除', msg):
                 self.logln('已取消删除操作')
                 return
             
-            self.logln('正在删除底部广告（后台）…')
-            self._task_start('remove_ads', core._mp_remove_bottom_ads,
-                           (pdf_path, ratio))
+            # 批量处理
+            if len(pdf_files) == 1:
+                self.logln('正在删除底部广告（后台）…')
+                self._task_start('remove_ads', core._mp_remove_bottom_ads,
+                               (pdf_files[0], ratio))
+            else:
+                self.logln('开始批量删除底部广告，共 %d 个文件…' % len(pdf_files))
+                self._batch_remove_ads(pdf_files, ratio)
             
         except Exception as error:
             self.logln('错误: %s' % error)
             messagebox.showerror('错误', str(error))
+
+    def _batch_remove_ads(self, pdf_files: list, ratio: float) -> None:
+        """批量删除多个PDF的底部广告"""
+        import threading
+        
+        def process_batch():
+            success_count = 0
+            fail_count = 0
+            for i, pdf_path in enumerate(pdf_files, 1):
+                try:
+                    self.root.after(0, lambda p=pdf_path, n=i: 
+                                   self.logln('[%d/%d] 处理: %s' % (n, len(pdf_files), os.path.basename(p))))
+                    
+                    # 调用核心函数处理
+                    output = core.remove_bottom_ads(pdf_path, ratio, out_mode='copy')
+                    success_count += 1
+                    self.root.after(0, lambda o=output: 
+                                   self.logln('  完成: %s' % os.path.basename(o)))
+                except Exception as e:
+                    fail_count += 1
+                    self.root.after(0, lambda p=pdf_path, err=str(e): 
+                                   self.logln('  失败: %s - %s' % (os.path.basename(p), err)))
+            
+            # 完成提示
+            self.root.after(0, lambda: self.logln('批量处理完成！成功: %d, 失败: %d' % (success_count, fail_count)))
+            self.root.after(0, lambda: messagebox.showinfo('完成', 
+                '批量处理完成！\n成功: %d\n失败: %d' % (success_count, fail_count)))
+        
+        # 在后台线程执行
+        thread = threading.Thread(target=process_batch, daemon=True)
+        thread.start()
 
     def do_doc2pdf(self) -> None:
         """任务5·Word转PDF：校验扩展名（.docx 纯Python引擎，老格式需Office）后后台转换"""
