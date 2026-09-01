@@ -151,7 +151,7 @@ def _mp_unlock_pdf(q, pdf_path, password, output_path) -> None:
         q.put(('error', type(error).__name__ + ': ' + str(error)))
 
 
-def _mp_remove_bottom_ads(q, pdf_path, bottom_ratio) -> None:
+def _mp_remove_bottom_ads(q, pdf_path, bottom_ratio, out_mode='copy') -> None:
     """子进程入口：删除底部广告 -> ('remove_ads_done', output_path)"""
     try:
         def progress_callback(current, total, msg):
@@ -159,7 +159,7 @@ def _mp_remove_bottom_ads(q, pdf_path, bottom_ratio) -> None:
         
         output_path = remove_bottom_ads(
             pdf_path, bottom_ratio, 
-            out_mode='copy', progress=progress_callback)
+            out_mode=out_mode, progress=progress_callback)
         q.put(('remove_ads_done', output_path))
     except Exception as error:
         q.put(('error', type(error).__name__ + ': ' + str(error)))

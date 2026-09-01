@@ -546,6 +546,11 @@ class App:
         ttk.Entry(row_frame, textvariable=self.bottom_ratio_var, width=5).pack(side='left', padx=4)
         ttk.Label(row_frame, text='%').pack(side='left')
         
+        # 直接修改原文件选项
+        self.ads_overwrite_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(row_frame, text='直接修改原文件（不备份）', 
+                        variable=self.ads_overwrite_var).pack(side='left', padx=12)
+        
         # 操作按钮
         btn_frame = ttk.Frame(ads_frame)
         btn_frame.pack(fill='x', **PADDING)
@@ -557,7 +562,8 @@ class App:
         self.btn_remove_ads.pack(side='left', padx=4)
         
         self.hint(page, '识别PDF页面底部指定区域内的文字/图片广告并真正删除（使用redaction技术）；'
-                        '建议先"预览"确认位置，再执行删除；默认底部15%区域；支持批量处理多个文件',
+                        '建议先"预览"确认位置，再执行删除；默认底部15%区域；支持批量处理多个文件；'
+                        '勾选"直接修改原文件"则不生成备份',
                   wrap=620).pack(anchor='w', **PADDING)
         
         return page
@@ -1526,6 +1532,9 @@ class App:
             if ratio < 0.05 or ratio > 0.5:
                 raise ValueError('比例范围: 5%-50%')
             
+            # 获取输出模式
+            out_mode = 'same' if self.ads_overwrite_var.get() else 'copy'
+            
             # 获取文件列表
             if self.ads_mode_var.get() == 'single':
                 pdf_path = self.pdf_var.get().strip()
@@ -1540,12 +1549,13 @@ class App:
                     raise ValueError('请先添加PDF文件到列表')
             
             # 确认操作
+            mode_text = '直接修改原文件（不备份）' if out_mode == 'same' else '生成副本'
             if len(pdf_files) == 1:
                 msg = '将删除PDF底部 %.0f%% 区域内的所有文字/图片内容！\n\n' \
-                      '建议先"预览"确认位置。\n\n是否继续？' % (ratio * 100)
+                      '输出模式：%s\n\n建议先"预览"确认位置。\n\n是否继续？' % (ratio * 100, mode_text)
             else:
                 msg = '将批量处理 %d 个PDF文件，删除底部 %.0f%% 区域内的所有文字/图片内容！\n\n' \
-                      '建议先"预览"确认位置。\n\n是否继续？' % (len(pdf_files), ratio * 100)
+                      '输出模式：%s\n\n建议先"预览"确认位置。\n\n是否继续？' % (len(pdf_files), ratio * 100, mode_text)
             
             if not messagebox.askyesno('确认删除', msg):
                 self.logln('已取消删除操作')
@@ -1555,16 +1565,16 @@ class App:
             if len(pdf_files) == 1:
                 self.logln('正在删除底部广告（后台）…')
                 self._task_start('remove_ads', core._mp_remove_bottom_ads,
-                               (pdf_files[0], ratio))
+                               (pdf_files[0], ratio, out_mode))
             else:
                 self.logln('开始批量删除底部广告，共 %d 个文件…' % len(pdf_files))
-                self._batch_remove_ads(pdf_files, ratio)
+                self._batch_remove_ads(pdf_files, ratio, out_mode)
             
         except Exception as error:
             self.logln('错误: %s' % error)
             messagebox.showerror('错误', str(error))
 
-    def _batch_remove_ads(self, pdf_files: list, ratio: float) -> None:
+    def _batch_remove_ads(self, pdf_files: list, ratio: float, out_mode: str = 'copy') -> None:
         """批量删除多个PDF的底部广告"""
         import threading
         
@@ -1577,7 +1587,7 @@ class App:
                                    self.logln('[%d/%d] 处理: %s' % (n, len(pdf_files), os.path.basename(p))))
                     
                     # 调用核心函数处理
-                    output = core.remove_bottom_ads(pdf_path, ratio, out_mode='copy')
+                    output = core.remove_bottom_ads(pdf_path, ratio, out_mode=out_mode)
                     success_count += 1
                     self.root.after(0, lambda o=output: 
                                    self.logln('  完成: %s' % os.path.basename(o)))
