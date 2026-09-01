@@ -503,7 +503,6 @@ def merge_epubs(epub_paths: List[str], output_path: str,
         book_title = book_title[0][0] if book_title else os.path.basename(book_path)
         
         # 添加章节分隔页（作为目录项）
-        chapter_id = 'chapter_%d' % book_index
         separator = epub.EpubHtml(
             title=book_title,
             file_name='chapter_%d.xhtml' % book_index,
@@ -521,52 +520,57 @@ def merge_epubs(epub_paths: List[str], output_path: str,
             item_id_counter += 1
             item_name = item.get_name()
             
-            # 处理内容文档（XHTML/HTML）
-            if item.get_type() == ebooklib.ITEM_DOCUMENT:
-                # 重命名文件以避免冲突
-                new_name = 'book%d_%s' % (book_index, item_name)
-                
-                # 创建新项目
-                new_item = epub.EpubHtml(
-                    title=item_name,
-                    file_name=new_name,
-                    lang='zh'
-                )
-                new_item.content = item.get_content()
-                
-                # 复制属性
-                if hasattr(item, 'properties'):
-                    new_item.properties = item.properties
-                
-                merged_book.add_item(new_item)
-                spine_items.append(new_item)
-                book_toc.append((new_item, []))
-                
-            # 处理图片
-            elif item.get_type() == ebooklib.ITEM_IMAGE:
-                new_name = 'book%d_%s' % (book_index, item_name)
-                if new_name not in added_items:
-                    img = epub.EpubImage(
-                        uid='img_%d' % item_id_counter,
-                        file_name=new_name,
-                        media_type=item.get_media_type(),
-                        content=item.get_content()
-                    )
-                    merged_book.add_item(img)
-                    added_items[new_name] = img
+            try:
+                # 处理内容文档（XHTML/HTML）
+                if item.get_type() == ebooklib.ITEM_DOCUMENT:
+                    # 重命名文件以避免冲突
+                    new_name = 'book%d_%s' % (book_index, os.path.basename(item_name))
                     
-            # 处理CSS
-            elif item.get_type() == ebooklib.ITEM_STYLE:
-                new_name = 'book%d_%s' % (book_index, item_name)
-                if new_name not in added_items:
-                    css = epub.EpubItem(
-                        uid='style_%d' % item_id_counter,
+                    # 创建新项目
+                    new_item = epub.EpubHtml(
+                        title=item_name,
                         file_name=new_name,
-                        media_type=item.get_media_type(),
-                        content=item.get_content()
+                        lang='zh'
                     )
-                    merged_book.add_item(css)
-                    added_items[new_name] = css
+                    new_item.content = item.get_content()
+                    
+                    # 复制属性
+                    if hasattr(item, 'properties'):
+                        new_item.properties = item.properties
+                    
+                    merged_book.add_item(new_item)
+                    spine_items.append(new_item)
+                    book_toc.append((new_item, []))
+                    
+                # 处理图片
+                elif item.get_type() == ebooklib.ITEM_IMAGE:
+                    new_name = 'book%d_%s' % (book_index, os.path.basename(item_name))
+                    if new_name not in added_items:
+                        img = epub.EpubImage(
+                            uid='img_%d' % item_id_counter,
+                            file_name=new_name,
+                            media_type=item.get_media_type(),
+                            content=item.get_content()
+                        )
+                        merged_book.add_item(img)
+                        added_items[new_name] = img
+                        
+                # 处理CSS
+                elif item.get_type() == ebooklib.ITEM_STYLE:
+                    new_name = 'book%d_%s' % (book_index, os.path.basename(item_name))
+                    if new_name not in added_items:
+                        css = epub.EpubItem(
+                            uid='style_%d' % item_id_counter,
+                            file_name=new_name,
+                            media_type=item.get_media_type(),
+                            content=item.get_content()
+                        )
+                        merged_book.add_item(css)
+                        added_items[new_name] = css
+                        
+            except Exception as e:
+                # 跳过无法处理的项目，继续处理其他内容
+                continue
         
         # 为这本书的目录添加一个分组
         if book_toc:
@@ -574,7 +578,10 @@ def merge_epubs(epub_paths: List[str], output_path: str,
     
     # 处理所有EPUB
     for i, path in enumerate(epub_paths):
-        process_book(path, i)
+        try:
+            process_book(path, i)
+        except Exception as e:
+            raise ValueError('处理EPUB失败: %s - %s' % (path, str(e)))
     
     # 设置目录
     merged_book.toc = toc_items
