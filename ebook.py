@@ -439,6 +439,7 @@ def _parse_ncx(file_bytes: bytes) -> List[Tuple[int, str, int]]:
 def merge_epubs(epub_paths: List[str], output_path: str,
                 title: str = '', author: str = '') -> str:
     """将多本EPUB合并为一本，自动生成合并目录。
+    使用zipfile直接操作，绕过ebooklib的资源校验。
     
     Args:
         epub_paths: EPUB文件路径列表（按顺序合并）
@@ -449,12 +450,6 @@ def merge_epubs(epub_paths: List[str], output_path: str,
     Returns:
         输出文件路径
     """
-    try:
-        import ebooklib
-        from ebooklib import epub
-    except ImportError:
-        raise ImportError('需要安装ebooklib库: pip install ebooklib')
-    
     if not epub_paths:
         raise ValueError('请至少选择一本EPUB')
     
@@ -464,138 +459,235 @@ def merge_epubs(epub_paths: List[str], output_path: str,
         if not path.lower().endswith('.epub'):
             raise ValueError('不是EPUB文件: %s' % path)
     
-    # 读取第一本作为基础
-    first_book = epub.read_epub(epub_paths[0], options={'ignore_ncx': True})
+    # 解压所有EPUB到临时目录，然后合并
+    import tempfile
+    import shutil
+    import zipfile
     
-    # 获取元数据
-    if not title:
-        title = first_book.get_metadata('DC', 'title')
-        title = title[0][0] if title else os.path.splitext(os.path.basename(epub_paths[0]))[0]
+    work_dir = tempfile.mkdtemp()
+    output_dir = os.path.join(work_dir, 'merged')
+    merged_opf_dir = os.path.join(output_dir, 'OEBPS')
+    os.makedirs(merged_opf_dir, exist_ok=True)
     
-    if not author:
-        author = first_book.get_metadata('DC', 'creator')
-        author = author[0][0] if author else '未知作者'
-    
-    # 创建新书
-    merged_book = epub.EpubBook()
-    merged_book.set_identifier('merged_%d' % int(__import__('time').time()))
-    merged_book.set_title(title)
-    merged_book.set_language('zh')
-    merged_book.add_author(author)
-    
-    # 用于跟踪已添加的资源（避免重复）
-    added_items = {}
-    spine_items = ['nav']
-    toc_items = []
-    item_id_counter = 0
-    
-    def process_book(book_path, book_index):
-        """处理单本EPUB，将内容添加到合并后的书中"""
-        nonlocal item_id_counter
-        
-        try:
-            book = epub.read_epub(book_path, options={'ignore_ncx': True})
-        except Exception as e:
-            raise ValueError('无法打开EPUB: %s - %s' % (book_path, str(e)))
-        
-        # 获取书名用于目录
-        book_title = book.get_metadata('DC', 'title')
-        book_title = book_title[0][0] if book_title else os.path.basename(book_path)
-        
-        # 添加章节分隔页（作为目录项）
-        separator = epub.EpubHtml(
-            title=book_title,
-            file_name='chapter_%d.xhtml' % book_index,
-            lang='zh'
-        )
-        separator.content = '<h1>%s</h1><hr/>' % book_title
-        merged_book.add_item(separator)
-        spine_items.append(separator)
-        
-        # 收集这本书的目录
-        book_toc = []
-        
-        # 处理所有项目
-        for item in book.get_items():
-            item_id_counter += 1
-            item_name = item.get_name()
-            
-            try:
-                content = item.get_content()
-                media_type = item.get_media_type()
-            except Exception:
-                # 无法读取内容，跳过此项目
-                continue
-            
-            # 处理内容文档（XHTML/HTML）
-            if item.get_type() == ebooklib.ITEM_DOCUMENT:
-                # 重命名文件以避免冲突
-                new_name = 'book%d_%s' % (book_index, os.path.basename(item_name))
+    try:
+        # 读取第一本书获取元数据
+        first_epub = epub_paths[0]
+        with zipfile.ZipFile(first_epub, 'r') as z:
+            # 找OPF文件
+            opf_path = _find_opf_in_zip(z)
+            if opf_path:
+                opf_content = z.read(opf_path).decode('utf-8', errors='ignore')
+                # 简单提取title和creator
+                import re
+                title_match = re.search(r'<dc:title[^>]*>(.*?)</dc:title>', opf_content, re.DOTALL)
+                creator_match = re.search(r'<dc:creator[^>]*>(.*?)</dc:creator>', opf_content, re.DOTALL)
                 
-                # 创建新项目
-                new_item = epub.EpubHtml(
-                    title=item_name,
-                    file_name=new_name,
-                    lang='zh'
-                )
-                new_item.content = content
+                if not title and title_match:
+                    title = title_match.group(1).strip()
+                if not author and creator_match:
+                    author = creator_match.group(1).strip()
+        
+        if not title:
+            title = os.path.splitext(os.path.basename(first_epub))[0]
+        if not author:
+            author = '未知作者'
+        
+        # 收集所有文件
+        all_files = {}  # new_path -> content
+        spine_order = []  # XHTML文件顺序
+        manifest_items = []  # manifest条目
+        toc_items = []  # 目录条目
+        
+        for book_idx, epub_path in enumerate(epub_paths):
+            with zipfile.ZipFile(epub_path, 'r') as z:
+                opf_path = _find_opf_in_zip(z)
+                if not opf_path:
+                    continue
                 
-                # 复制属性
-                if hasattr(item, 'properties'):
-                    new_item.properties = item.properties
+                opf_dir = os.path.dirname(opf_path)
+                opf_content = z.read(opf_path).decode('utf-8', errors='ignore')
                 
-                merged_book.add_item(new_item)
-                spine_items.append(new_item)
-                book_toc.append((new_item, []))
+                # 解析spine顺序
+                book_spine = _parse_opf_spine(z, opf_path)
+                book_title = os.path.basename(epub_path).replace('.epub', '')
                 
-            # 处理图片
-            elif item.get_type() == ebooklib.ITEM_IMAGE:
-                new_name = 'book%d_%s' % (book_index, os.path.basename(item_name))
-                if new_name not in added_items:
-                    img = epub.EpubImage(
-                        uid='img_%d' % item_id_counter,
-                        file_name=new_name,
-                        media_type=media_type,
-                        content=content
-                    )
-                    merged_book.add_item(img)
-                    added_items[new_name] = img
+                # 添加分隔页
+                sep_html = '<html><head><title>%s</title></head><body><h1>%s</h1><hr/></body></html>' % (book_title, book_title)
+                sep_name = 'Text/separator_%d.xhtml' % book_idx
+                all_files[sep_name] = sep_html.encode('utf-8')
+                spine_order.append(sep_name)
+                manifest_items.append((sep_name, 'application/xhtml+xml', 'chapter%d' % book_idx))
+                toc_items.append((book_title, sep_name))
+                
+                # 复制所有资源
+                for item_name in z.namelist():
+                    if item_name.endswith('/') or item_name == opf_path:
+                        continue
                     
-            # 处理CSS
-            elif item.get_type() == ebooklib.ITEM_STYLE:
-                new_name = 'book%d_%s' % (book_index, os.path.basename(item_name))
-                if new_name not in added_items:
-                    css = epub.EpubItem(
-                        uid='style_%d' % item_id_counter,
-                        file_name=new_name,
-                        media_type=media_type,
-                        content=content
-                    )
-                    merged_book.add_item(css)
-                    added_items[new_name] = css
+                    # 跳过META-INF
+                    if 'META-INF' in item_name:
+                        continue
+                    
+                    # 确定新文件名
+                    rel_path = item_name
+                    if opf_dir and item_name.startswith(opf_dir + '/'):
+                        rel_path = item_name[len(opf_dir)+1:]
+                    
+                    new_path = 'book%d_%s' % (book_idx, rel_path)
+                    
+                    try:
+                        content = z.read(item_name)
+                        all_files[new_path] = content
+                        
+                        # 根据扩展名确定媒体类型
+                        ext = os.path.splitext(rel_path)[1].lower()
+                        media_type = _get_media_type(ext)
+                        if media_type:
+                            manifest_items.append((new_path, media_type, None))
+                            if ext in ('.xhtml', '.html', '.htm'):
+                                spine_order.append(new_path)
+                    except Exception:
+                        continue
         
-        # 为这本书的目录添加一个分组
-        if book_toc:
-            toc_items.append((epub.Section(book_title), [t[0] for t in book_toc]))
+        # 生成content.opf
+        opf_content = _generate_opf(title, author, manifest_items, spine_order)
+        all_files['OEBPS/content.opf'] = opf_content.encode('utf-8')
+        
+        # 生成toc.ncx
+        ncx_content = _generate_ncx(title, toc_items)
+        all_files['OEBPS/toc.ncx'] = ncx_content.encode('utf-8')
+        
+        # 生成container.xml
+        container_xml = '''<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>'''
+        all_files['META-INF/container.xml'] = container_xml.encode('utf-8')
+        
+        # 写入输出EPUB
+        with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zout:
+            for path, content in all_files.items():
+                zout.writestr(path, content)
+        
+        return output_path
+        
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def _find_opf_in_zip(z):
+    """在ZIP中找到OPF文件路径"""
+    import zipfile
+    # 首先检查container.xml
+    if 'META-INF/container.xml' in z.namelist():
+        container = z.read('META-INF/container.xml').decode('utf-8', errors='ignore')
+        import re
+        match = re.search(r'full-path="([^"]+\.opf)"', container)
+        if match:
+            return match.group(1)
     
-    # 处理所有EPUB
-    for i, path in enumerate(epub_paths):
-        try:
-            process_book(path, i)
-        except Exception as e:
-            raise ValueError('处理EPUB失败: %s - %s' % (path, str(e)))
+    # 查找任何.opf文件
+    for name in z.namelist():
+        if name.endswith('.opf'):
+            return name
+    return None
+
+
+def _parse_opf_spine(z, opf_path):
+    """从OPF解析spine顺序"""
+    import re
+    try:
+        opf_content = z.read(opf_path).decode('utf-8', errors='ignore')
+        # 提取spine中的itemref idref
+        spine_matches = re.findall(r'<itemref\s+idref="([^"]+)"', opf_content)
+        # 提取manifest中的id->href映射
+        manifest_matches = re.findall(r'<item\s+[^>]*id="([^"]+)"[^>]*href="([^"]+)"', opf_content)
+        id_to_href = dict(manifest_matches)
+        return [id_to_href.get(idref, idref) for idref in spine_matches]
+    except Exception:
+        return []
+
+
+def _get_media_type(ext):
+    """根据扩展名获取媒体类型"""
+    types = {
+        '.xhtml': 'application/xhtml+xml',
+        '.html': 'application/xhtml+xml',
+        '.htm': 'application/xhtml+xml',
+        '.css': 'text/css',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.svg': 'image/svg+xml',
+        '.js': 'application/javascript',
+        '.ttf': 'application/font-sfnt',
+        '.otf': 'application/font-sfnt',
+        '.woff': 'application/font-woff',
+        '.woff2': 'font/woff2',
+    }
+    return types.get(ext)
+
+
+def _generate_opf(title, author, manifest_items, spine_order):
+    """生成content.opf内容"""
+    opf = '''<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:title>%s</dc:title>
+    <dc:creator>%s</dc:creator>
+    <dc:language>zh</dc:language>
+    <dc:identifier id="BookId">merged_%d</dc:identifier>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+''' % (title, author, int(__import__('time').time()))
     
-    # 设置目录
-    merged_book.toc = toc_items
+    for i, (href, media_type, uid) in enumerate(manifest_items):
+        item_id = uid or 'item%d' % i
+        opf += '    <item id="%s" href="%s" media-type="%s"/>\n' % (item_id, href, media_type)
     
-    # 添加默认NCX和Nav
-    merged_book.add_item(epub.EpubNcx())
-    merged_book.add_item(epub.EpubNav())
+    opf += '''  </manifest>
+  <spine toc="ncx">
+'''
+    for href in spine_order:
+        # 找到对应的item id
+        item_id = None
+        for i, (h, _, uid) in enumerate(manifest_items):
+            if h == href:
+                item_id = uid or 'item%d' % i
+                break
+        if item_id:
+            opf += '    <itemref idref="%s"/>\n' % item_id
     
-    # 设置spine
-    merged_book.spine = spine_items
+    opf += '''  </spine>
+</package>'''
+    return opf
+
+
+def _generate_ncx(title, toc_items):
+    """生成toc.ncx内容"""
+    ncx = '''<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head>
+    <meta name="dtb:uid" content="merged"/>
+    <meta name="dtb:depth" content="1"/>
+    <meta name="dtb:totalPageCount" content="0"/>
+    <meta name="dtb:maxPageNumber" content="0"/>
+  </head>
+  <docTitle><text>%s</text></docTitle>
+  <navMap>
+''' % title
     
-    # 写入文件
-    epub.write_epub(output_path, merged_book, {})
+    for i, (nav_title, href) in enumerate(toc_items):
+        ncx += '''    <navPoint id="navPoint-%d" playOrder="%d">
+      <navLabel><text>%s</text></navLabel>
+      <content src="%s"/>
+    </navPoint>
+''' % (i+1, i+1, nav_title, href)
     
-    return output_path
+    ncx += '''  </navMap>
+</ncx>'''
+    return ncx
