@@ -439,7 +439,7 @@ def _parse_ncx(file_bytes: bytes) -> List[Tuple[int, str, int]]:
 def merge_epubs(epub_paths: List[str], output_path: str,
                 title: str = '', author: str = '') -> str:
     """将多本EPUB合并为一本，自动生成合并目录。
-    使用zipfile直接操作，绕过ebooklib的资源校验。
+    保持原始目录结构，每本书放在独立子目录中。
     
     Args:
         epub_paths: EPUB文件路径列表（按顺序合并）
@@ -459,81 +459,77 @@ def merge_epubs(epub_paths: List[str], output_path: str,
         if not path.lower().endswith('.epub'):
             raise ValueError('不是EPUB文件: %s' % path)
     
-    # 解压所有EPUB到临时目录，然后合并
     import tempfile
     import shutil
     import zipfile
     
     work_dir = tempfile.mkdtemp()
-    output_dir = os.path.join(work_dir, 'merged')
-    merged_opf_dir = os.path.join(output_dir, 'OEBPS')
-    os.makedirs(merged_opf_dir, exist_ok=True)
+    merged_dir = os.path.join(work_dir, 'merged')
+    os.makedirs(merged_dir)
     
     try:
         # 读取第一本书获取元数据
-        first_epub = epub_paths[0]
-        with zipfile.ZipFile(first_epub, 'r') as z:
-            # 找OPF文件
+        with zipfile.ZipFile(epub_paths[0], 'r') as z:
             opf_path = _find_opf_in_zip(z)
             if opf_path:
                 opf_content = z.read(opf_path).decode('utf-8', errors='ignore')
-                # 简单提取title和creator
                 import re
                 title_match = re.search(r'<dc:title[^>]*>(.*?)</dc:title>', opf_content, re.DOTALL)
                 creator_match = re.search(r'<dc:creator[^>]*>(.*?)</dc:creator>', opf_content, re.DOTALL)
-                
                 if not title and title_match:
                     title = title_match.group(1).strip()
                 if not author and creator_match:
                     author = creator_match.group(1).strip()
         
         if not title:
-            title = os.path.splitext(os.path.basename(first_epub))[0]
+            title = os.path.splitext(os.path.basename(epub_paths[0]))[0]
         if not author:
             author = '未知作者'
         
-        # 收集所有文件
-        all_files = {}  # new_path -> content
-        spine_order = []  # XHTML文件顺序
+        # 收集所有需要打包的文件
+        all_files = {}  # 相对路径 -> 内容
+        spine_items = []  # XHTML文件顺序
         manifest_items = []  # manifest条目
         toc_items = []  # 目录条目
         
         for book_idx, epub_path in enumerate(epub_paths):
+            book_dir = 'book%d' % book_idx
+            
             with zipfile.ZipFile(epub_path, 'r') as z:
                 opf_path = _find_opf_in_zip(z)
                 if not opf_path:
                     continue
                 
                 opf_dir = os.path.dirname(opf_path)
-                opf_content = z.read(opf_path).decode('utf-8', errors='ignore')
-                
-                # 解析spine顺序
-                book_spine = _parse_opf_spine(z, opf_path)
                 book_title = os.path.basename(epub_path).replace('.epub', '')
                 
                 # 添加分隔页
-                sep_html = '<html><head><title>%s</title></head><body><h1>%s</h1><hr/></body></html>' % (book_title, book_title)
-                sep_name = 'Text/separator_%d.xhtml' % book_idx
+                sep_html = '''<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>%s</title></head>
+<body><h1>%s</h1><hr/></body>
+</html>''' % (book_title, book_title)
+                sep_name = '%s/Text/separator.xhtml' % book_dir
                 all_files[sep_name] = sep_html.encode('utf-8')
-                spine_order.append(sep_name)
-                manifest_items.append((sep_name, 'application/xhtml+xml', 'chapter%d' % book_idx))
+                spine_items.append((book_idx, sep_name))
+                manifest_items.append((book_idx, sep_name, 'application/xhtml+xml', 'chapter%d' % book_idx))
                 toc_items.append((book_title, sep_name))
                 
-                # 复制所有资源
+                # 复制所有资源，保持原始目录结构
                 for item_name in z.namelist():
-                    if item_name.endswith('/') or item_name == opf_path:
+                    if item_name.endswith('/'):
                         continue
-                    
-                    # 跳过META-INF
                     if 'META-INF' in item_name:
                         continue
                     
-                    # 确定新文件名
-                    rel_path = item_name
+                    # 确定新路径（保持相对于OPF的路径）
                     if opf_dir and item_name.startswith(opf_dir + '/'):
                         rel_path = item_name[len(opf_dir)+1:]
+                    else:
+                        rel_path = item_name
                     
-                    new_path = 'book%d_%s' % (book_idx, rel_path)
+                    new_path = '%s/%s' % (book_dir, rel_path)
                     
                     try:
                         content = z.read(item_name)
@@ -543,14 +539,14 @@ def merge_epubs(epub_paths: List[str], output_path: str,
                         ext = os.path.splitext(rel_path)[1].lower()
                         media_type = _get_media_type(ext)
                         if media_type:
-                            manifest_items.append((new_path, media_type, None))
+                            manifest_items.append((book_idx, new_path, media_type, None))
                             if ext in ('.xhtml', '.html', '.htm'):
-                                spine_order.append(new_path)
+                                spine_items.append((book_idx, new_path))
                     except Exception:
                         continue
         
         # 生成content.opf
-        opf_content = _generate_opf(title, author, manifest_items, spine_order)
+        opf_content = _generate_opf(title, author, manifest_items, spine_items)
         all_files['OEBPS/content.opf'] = opf_content.encode('utf-8')
         
         # 生成toc.ncx
@@ -631,7 +627,7 @@ def _get_media_type(ext):
     return types.get(ext)
 
 
-def _generate_opf(title, author, manifest_items, spine_order):
+def _generate_opf(title, author, manifest_items, spine_items):
     """生成content.opf内容"""
     opf = '''<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="BookId">
@@ -645,20 +641,19 @@ def _generate_opf(title, author, manifest_items, spine_order):
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
 ''' % (title, author, int(__import__('time').time()))
     
-    for i, (href, media_type, uid) in enumerate(manifest_items):
-        item_id = uid or 'item%d' % i
+    # 为每个文件生成唯一的ID
+    item_ids = {}
+    for i, (book_idx, href, media_type, uid) in enumerate(manifest_items):
+        item_id = uid or 'book%d_item%d' % (book_idx, i)
+        item_ids[(book_idx, href)] = item_id
         opf += '    <item id="%s" href="%s" media-type="%s"/>\n' % (item_id, href, media_type)
     
     opf += '''  </manifest>
   <spine toc="ncx">
 '''
-    for href in spine_order:
-        # 找到对应的item id
-        item_id = None
-        for i, (h, _, uid) in enumerate(manifest_items):
-            if h == href:
-                item_id = uid or 'item%d' % i
-                break
+    # 按book_idx分组，保持顺序
+    for book_idx, href in spine_items:
+        item_id = item_ids.get((book_idx, href))
         if item_id:
             opf += '    <itemref idref="%s"/>\n' % item_id
     
