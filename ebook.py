@@ -563,7 +563,9 @@ def merge_epubs(epub_paths: List[str], output_path: str,
         all_files['META-INF/container.xml'] = container_xml.encode('utf-8')
         
         # 写入输出EPUB
-        with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zout:
+        with zipfile.ZipFile(output_path, 'w') as zout:
+            # mimetype必须是第一个文件，且不压缩
+            zout.writestr('mimetype', b'application/epub+zip', compress_type=zipfile.ZIP_STORED)
             for path, content in all_files.items():
                 zout.writestr(path, content)
         
